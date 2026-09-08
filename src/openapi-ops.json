@@ -1,0 +1,1603 @@
+{
+  "ops": [
+    {
+      "name": "health_check",
+      "method": "GET",
+      "path": "/health",
+      "description": "Health Check",
+      "summary": "Health Check",
+      "tags": [
+        "Health"
+      ],
+      "properties": {},
+      "required": [],
+      "pathParams": [],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "public_stats",
+      "method": "GET",
+      "path": "/stats",
+      "description": "Public stats endpoint \u2014 no auth required.\nReturns aggregate coverage numbers for marketing/transparency.\nCached server-side for 30 minutes.",
+      "summary": "Public Stats",
+      "tags": [
+        "Health"
+      ],
+      "properties": {},
+      "required": [],
+      "pathParams": [],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "search_permits",
+      "method": "GET",
+      "path": "/v1/permits/search",
+      "description": "Search building permits by location, date, category, contractor and more.\n\nFilters combine with AND. Supply at least one narrowing filter -- a city, ZIP,\njurisdiction, date range or lat/lng radius -- for a query that returns quickly.\n\nResults are paginated and ordered newest-first on the permit's best available date\n(`date_issued`, falling back to `date_filed`). `total` is exact up to 10,000; beyond\nthat it stops counting and returns `total: 10000` with `total_capped: true`, meaning\n\"10,000 or more\". If the count cannot finish in time the response carries\n`total: null` with `total_unknown: true` -- an unknown total is reported as unknown\nand never as a number. Rows are unaffected either way; page through them normally.\n\n`category=hvac` matches HVAC and MECHANICAL together, because AC and furnace work is\nfiled under either depending on the city. Unknown parameter names are rejected with a\n400 rather than ignored, so a typo can never silently return unfiltered results.\n\nFree-tier keys are limited to a recent window; paid tiers have full history.",
+      "summary": "Search Permits",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "zip_code": {
+          "type": "string",
+          "description": "5-digit ZIP code"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name"
+        },
+        "state": {
+          "type": "string",
+          "description": "2-letter state code"
+        },
+        "jurisdiction": {
+          "type": "string",
+          "description": "Jurisdiction name (e.g. 'Wake County', 'Tacoma') or partial match"
+        },
+        "address": {
+          "type": "string",
+          "description": "Street address, partial + case-insensitive (e.g. '1600 Pennsylvania') \u2014 indexed, fast"
+        },
+        "lat": {
+          "type": "number",
+          "description": "Latitude for radius search"
+        },
+        "lng": {
+          "type": "number",
+          "description": "Longitude for radius search"
+        },
+        "radius_miles": {
+          "type": "number",
+          "description": "Radius in miles (used with lat/lng)",
+          "default": 5.0,
+          "maximum": 50
+        },
+        "bbox": {
+          "type": "string",
+          "description": "Map-viewport bounding box 'minLng,minLat,maxLng,maxLat'. Returns permits whose location falls inside the box (geocoded permits only)."
+        },
+        "polygon": {
+          "type": "string",
+          "description": "A drawn area as a GeoJSON Polygon geometry (URL-encoded), e.g. {\"type\":\"Polygon\",\"coordinates\":[[[lng,lat],...]]}. Returns permits inside the polygon (geocoded permits only)."
+        },
+        "category": {
+          "type": "string",
+          "description": "Permit category (e.g. solar, SOLAR, roofing, hvac \u2014 case insensitive)"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "filed",
+            "issued",
+            "in_progress",
+            "final",
+            "expired",
+            "cancelled",
+            "revoked",
+            "unknown",
+            "interconnected"
+          ],
+          "description": "Permit status (e.g. issued, filed, final)"
+        },
+        "property_type": {
+          "type": "string",
+          "enum": [
+            "residential",
+            "commercial",
+            "industrial",
+            "mixed_use",
+            "institutional",
+            "unknown"
+          ],
+          "description": "Property type (e.g. residential, commercial)"
+        },
+        "tag": {
+          "type": "string",
+          "description": "Filter by tag"
+        },
+        "record_kind": {
+          "type": "string",
+          "description": "Record kind: 'permit' (default, building permits only), 'contractor', 'tag', 'non_building', 'admin', or 'all'",
+          "default": "permit"
+        },
+        "filed_after": {
+          "type": "string",
+          "format": "date",
+          "description": "Filed on or after this date"
+        },
+        "filed_before": {
+          "type": "string",
+          "format": "date",
+          "description": "Filed on or before this date"
+        },
+        "issued_after": {
+          "type": "string",
+          "format": "date",
+          "description": "Issued on or after this date"
+        },
+        "issued_before": {
+          "type": "string",
+          "format": "date",
+          "description": "Issued on or before this date"
+        },
+        "date_after": {
+          "type": "string",
+          "format": "date",
+          "description": "On or after this date, matched against whichever date a record has (issued, else filed). Use this when a source populates only one of issued/filed \u2014 e.g. issued-only feeds vs filed-only feeds."
+        },
+        "date_before": {
+          "type": "string",
+          "format": "date",
+          "description": "On or before this date, matched against whichever date a record has (issued, else filed)."
+        },
+        "parcel": {
+          "type": "string",
+          "description": "Parcel number / APN / folio (formatting ignored). Returns permits on that parcel where the source publishes one."
+        },
+        "min_value": {
+          "type": "number",
+          "description": "Minimum estimated value"
+        },
+        "max_value": {
+          "type": "number",
+          "description": "Maximum estimated value"
+        },
+        "min_solar_kw": {
+          "type": "number",
+          "description": "Minimum extracted solar system size (kW DC)"
+        },
+        "max_solar_kw": {
+          "type": "number",
+          "description": "Maximum extracted solar system size (kW DC)"
+        },
+        "min_sqft": {
+          "type": "number",
+          "description": "Minimum square footage mentioned (from enrichment)"
+        },
+        "has_enrichment": {
+          "type": "boolean",
+          "description": "Only permits that have (true) or lack (false) LLM enrichment"
+        },
+        "scope": {
+          "type": "string",
+          "description": "Substring match on the enriched work scope"
+        },
+        "q": {
+          "type": "string",
+          "description": "Case-insensitive substring match across description, address, and permit number"
+        },
+        "contractor_name": {
+          "type": "string",
+          "description": "Contractor name (partial match)"
+        },
+        "owner_filed": {
+          "type": "boolean",
+          "description": "true = owner-filed permits only (no contractor on record but an owner name is present \u2014 often a DIY/homeowner lead, though for feeds that don't capture contractors the owner may be a builder or institution); false = permits that have a contractor"
+        },
+        "has_owner_address": {
+          "type": "boolean",
+          "description": "true = only permits that carry a property-owner mailing address; false = only those that do not. Coverage varies sharply by jurisdiction (we hold the county assessor roll for some and not others), so this is a targeting filter rather than a defect: it returns exactly the rows that are actionable. The address itself is visible on Business and above."
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "description": "Results per page. Above your plan's maximum this is clamped, not rejected; the response echoes the per_page actually applied.",
+          "default": 25,
+          "minimum": 1
+        },
+        "keyword": {
+          "type": "string",
+          "description": "Alias of `q`."
+        },
+        "date_from": {
+          "type": "string",
+          "format": "date",
+          "description": "Alias of `date_after`."
+        },
+        "date_to": {
+          "type": "string",
+          "format": "date",
+          "description": "Alias of `date_before`."
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Alias of `date_after`."
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Alias of `date_before`."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Alias of `per_page`. Clamped to your plan's maximum, not rejected."
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "zip_code",
+        "city",
+        "state",
+        "jurisdiction",
+        "address",
+        "lat",
+        "lng",
+        "radius_miles",
+        "bbox",
+        "polygon",
+        "category",
+        "status",
+        "property_type",
+        "tag",
+        "record_kind",
+        "filed_after",
+        "filed_before",
+        "issued_after",
+        "issued_before",
+        "date_after",
+        "date_before",
+        "parcel",
+        "min_value",
+        "max_value",
+        "min_solar_kw",
+        "max_solar_kw",
+        "min_sqft",
+        "has_enrichment",
+        "scope",
+        "q",
+        "contractor_name",
+        "owner_filed",
+        "has_owner_address",
+        "page",
+        "per_page",
+        "keyword",
+        "date_from",
+        "date_to",
+        "start_date",
+        "end_date",
+        "limit"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "export_permits",
+      "method": "GET",
+      "path": "/v1/permits/export",
+      "description": "Export permits matching filters as CSV. Tier-gated row limits.",
+      "summary": "Export Permits",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "zip_code": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "filed",
+            "issued",
+            "in_progress",
+            "final",
+            "expired",
+            "cancelled",
+            "revoked",
+            "unknown",
+            "interconnected"
+          ]
+        },
+        "property_type": {
+          "type": "string",
+          "enum": [
+            "residential",
+            "commercial",
+            "industrial",
+            "mixed_use",
+            "institutional",
+            "unknown"
+          ]
+        },
+        "tag": {
+          "type": "string"
+        },
+        "record_kind": {
+          "type": "string",
+          "default": "permit"
+        },
+        "filed_after": {
+          "type": "string",
+          "format": "date"
+        },
+        "filed_before": {
+          "type": "string",
+          "format": "date"
+        },
+        "issued_after": {
+          "type": "string",
+          "format": "date"
+        },
+        "issued_before": {
+          "type": "string",
+          "format": "date"
+        },
+        "date_after": {
+          "type": "string",
+          "format": "date",
+          "description": "On or after this date, matched against whichever date a record has (issued, else filed)."
+        },
+        "date_before": {
+          "type": "string",
+          "format": "date",
+          "description": "On or before this date, matched against whichever date a record has (issued, else filed)."
+        },
+        "parcel": {
+          "type": "string",
+          "description": "Parcel number / APN / folio (formatting ignored)."
+        },
+        "min_value": {
+          "type": "number"
+        },
+        "max_value": {
+          "type": "number"
+        },
+        "min_solar_kw": {
+          "type": "number"
+        },
+        "max_solar_kw": {
+          "type": "number"
+        },
+        "min_sqft": {
+          "type": "number"
+        },
+        "has_enrichment": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "q": {
+          "type": "string"
+        },
+        "contractor_name": {
+          "type": "string"
+        },
+        "owner_filed": {
+          "type": "boolean",
+          "description": "true = owner-filed permits only (no contractor on record, owner name present \u2014 often DIY/homeowner leads, though for feeds without contractor capture the owner may be a builder/institution); false = permits that have a contractor"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 1000,
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "keyword": {
+          "type": "string",
+          "description": "Alias of `q`."
+        },
+        "date_from": {
+          "type": "string",
+          "format": "date",
+          "description": "Alias of `date_after`."
+        },
+        "date_to": {
+          "type": "string",
+          "format": "date",
+          "description": "Alias of `date_before`."
+        },
+        "start_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Alias of `date_after`."
+        },
+        "end_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Alias of `date_before`."
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "zip_code",
+        "city",
+        "state",
+        "category",
+        "status",
+        "property_type",
+        "tag",
+        "record_kind",
+        "filed_after",
+        "filed_before",
+        "issued_after",
+        "issued_before",
+        "date_after",
+        "date_before",
+        "parcel",
+        "min_value",
+        "max_value",
+        "min_solar_kw",
+        "max_solar_kw",
+        "min_sqft",
+        "has_enrichment",
+        "scope",
+        "q",
+        "contractor_name",
+        "owner_filed",
+        "limit",
+        "keyword",
+        "date_from",
+        "date_to",
+        "start_date",
+        "end_date"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "sync_permits",
+      "method": "GET",
+      "path": "/v1/permits/sync",
+      "description": "Incremental data feed (change-data-capture). Page the dataset ordered by\n(updated_at, id). Omit `cursor` for the initial full load; persist `next_cursor` and pass\nit back after each nightly ingest to receive only new + changed permits. Upsert-only\n(deletes are not emitted).",
+      "summary": "Sync Permits",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "description": "Opaque cursor from the previous response's `next_cursor`. Omit to start the initial full sync from the beginning."
+        },
+        "since": {
+          "type": "string",
+          "description": "Alternative start point: an ISO-8601 UTC timestamp; returns permits with updated_at >= since. Ignored when `cursor` is supplied."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max permits per page (cursor page size, up to 50,000).",
+          "default": 5000,
+          "minimum": 1,
+          "maximum": 50000
+        },
+        "record_kind": {
+          "type": "string",
+          "description": "'permit' (default), a specific record_kind, or 'all'.",
+          "default": "permit"
+        },
+        "state": {
+          "type": "string",
+          "description": "Optional 2-letter state filter to scope the feed."
+        },
+        "category": {
+          "type": "string",
+          "description": "Optional category filter (e.g. solar, roofing)."
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "cursor",
+        "since",
+        "limit",
+        "record_kind",
+        "state",
+        "category"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "list_permit_events",
+      "method": "GET",
+      "path": "/v1/permits/events",
+      "description": "Queryable feed of permit status/date transitions (new_permit, status_change,\nissued, completed, expired), built from a daily-ingest diff. A real-time,\nhistorical, filter-scoped change feed no competitor offers below enterprise \u2014\npair it with a webhook to be alerted the moment a matching permit changes status.",
+      "summary": "List Permit Events",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "event_type": {
+          "type": "string",
+          "description": "Filter by event type: new_permit, status_change, issued, completed, expired"
+        },
+        "category": {
+          "type": "string",
+          "description": "Permit category (e.g. solar, battery)"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name"
+        },
+        "state": {
+          "type": "string",
+          "description": "2-letter state code"
+        },
+        "jurisdiction": {
+          "type": "string",
+          "description": "Jurisdiction name (partial)"
+        },
+        "permit_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Events for a single permit id"
+        },
+        "detected_after": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Only events detected on/after this UTC timestamp (ISO 8601)"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "event_type",
+        "category",
+        "city",
+        "state",
+        "jurisdiction",
+        "permit_id",
+        "detected_after",
+        "page",
+        "per_page"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "get_permit",
+      "method": "GET",
+      "path": "/v1/permits/{permit_id}",
+      "description": "Get full details for a single permit. Pass permit_id (UUID from search results) or permit_number (jurisdiction number). If only permit_number is given, the best search match is returned.",
+      "summary": "Get Permit",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "permit_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "permit_number": {
+          "type": "string",
+          "description": "Issuing-jurisdiction permit number. Used when permit_id is unknown; resolved via search."
+        }
+      },
+      "required": [
+        "permit_id"
+      ],
+      "pathParams": [
+        "permit_id"
+      ],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "get_permits_by_address",
+      "method": "GET",
+      "path": "/v1/permits/address/{address}",
+      "description": "Get all permits for a specific address (partial match).",
+      "summary": "Get Permits By Address",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "record_kind": {
+          "type": "string",
+          "description": "'permit' (default), a specific record_kind, or 'all'.",
+          "default": "permit"
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "pathParams": [
+        "address"
+      ],
+      "queryParams": [
+        "page",
+        "per_page",
+        "record_kind"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "get_coverage_stats",
+      "method": "GET",
+      "path": "/v1/permits/stats/coverage",
+      "description": "Get coverage statistics \u2014 total permits, jurisdictions, and breakdown by city.",
+      "summary": "Get Coverage Stats",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {},
+      "required": [],
+      "pathParams": [],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "list_plays",
+      "method": "GET",
+      "path": "/v1/plays",
+      "description": "List available trade plays and their parameters.",
+      "summary": "List Plays",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {},
+      "required": [],
+      "pathParams": [],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "system_age",
+      "method": "GET",
+      "path": "/v1/plays/system-age",
+      "description": "Addresses whose LATEST permit in the trade is min\u2013max years old with nothing\nsince \u2014 the system is statistically due for replacement. Only trades with a real\nlifecycle are supported (roofing, hvac, mechanical, solar=repower, pool).",
+      "summary": "System Age",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "trade": {
+          "type": "string",
+          "description": "roofing | hvac | mechanical | solar | pool"
+        },
+        "state": {
+          "type": "string",
+          "description": "2-letter state code"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name"
+        },
+        "zip_code": {
+          "type": "string",
+          "description": "5-digit ZIP"
+        },
+        "jurisdiction": {
+          "type": "string",
+          "description": "Jurisdiction name (partial)"
+        },
+        "min_age_years": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 40,
+          "description": "Override the trade's default minimum age"
+        },
+        "max_age_years": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Override the trade's default maximum age"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "trade"
+      ],
+      "pathParams": [],
+      "queryParams": [
+        "trade",
+        "state",
+        "city",
+        "zip_code",
+        "jurisdiction",
+        "min_age_years",
+        "max_age_years",
+        "page",
+        "per_page"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "battery_retrofit_candidates",
+      "method": "GET",
+      "path": "/v1/plays/battery-retrofit-candidates",
+      "description": "Solar permits aged between min/max years whose address has NO battery permit\non file \u2014 the storage-retrofit lead list. Requires a location filter.",
+      "summary": "Battery Retrofit Candidates",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "description": "2-letter state code"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name"
+        },
+        "zip_code": {
+          "type": "string",
+          "description": "5-digit ZIP"
+        },
+        "jurisdiction": {
+          "type": "string",
+          "description": "Jurisdiction name (partial)"
+        },
+        "min_age_years": {
+          "type": "number",
+          "description": "Minimum age of the PV permit, in years",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 30
+        },
+        "max_age_years": {
+          "type": "number",
+          "description": "Maximum age of the PV permit, in years",
+          "default": 7,
+          "minimum": 0,
+          "maximum": 40
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "state",
+        "city",
+        "zip_code",
+        "jurisdiction",
+        "min_age_years",
+        "max_age_years",
+        "page",
+        "per_page"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "reroof_due",
+      "method": "GET",
+      "path": "/v1/plays/reroof-due",
+      "description": "Roofing permits aged min-max years whose address has NO newer roofing permit \u2014\nhomes whose roof is statistically due for replacement. Alias of\n/v1/plays/system-age?trade=roofing (kept as the discoverable roofing-first name).",
+      "summary": "Reroof Due",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "description": "2-letter state code"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name"
+        },
+        "zip_code": {
+          "type": "string",
+          "description": "5-digit ZIP"
+        },
+        "jurisdiction": {
+          "type": "string",
+          "description": "Jurisdiction name (partial)"
+        },
+        "min_age_years": {
+          "type": "number",
+          "description": "Minimum age of the roofing permit, in years",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 40
+        },
+        "max_age_years": {
+          "type": "number",
+          "description": "Maximum age of the roofing permit, in years",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 60
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "state",
+        "city",
+        "zip_code",
+        "jurisdiction",
+        "min_age_years",
+        "max_age_years",
+        "page",
+        "per_page"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "orphan_recovery",
+      "method": "GET",
+      "path": "/v1/plays/orphan-recovery",
+      "description": "PV permits whose installer (contractor, applicant, or owner) matches `installer`\nin a territory \u2014 a named competitor's customer base. Requires a location filter.",
+      "summary": "Orphan Recovery",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {
+        "installer": {
+          "type": "string",
+          "description": "Installer name to match (contractor/applicant/owner)",
+          "minLength": 2
+        },
+        "state": {
+          "type": "string",
+          "description": "2-letter state code"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name"
+        },
+        "zip_code": {
+          "type": "string",
+          "description": "5-digit ZIP"
+        },
+        "jurisdiction": {
+          "type": "string",
+          "description": "Jurisdiction name (partial)"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "installer"
+      ],
+      "pathParams": [],
+      "queryParams": [
+        "installer",
+        "state",
+        "city",
+        "zip_code",
+        "jurisdiction",
+        "page",
+        "per_page"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "search_contractors",
+      "method": "GET",
+      "path": "/v1/contractors/search",
+      "description": "Search contractors by name, location, or specialty, ranked by activity score.",
+      "summary": "Search Contractors",
+      "tags": [
+        "Contractors"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Contractor name (partial match)"
+        },
+        "state": {
+          "type": "string",
+          "description": "2-letter state code"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name"
+        },
+        "specialty": {
+          "type": "string",
+          "description": "Specialty tag (e.g. solar, roofing, hvac)"
+        },
+        "min_permits": {
+          "type": "integer",
+          "description": "Minimum total permits"
+        },
+        "min_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Minimum contractor activity score (0-100)"
+        },
+        "sort": {
+          "type": "string",
+          "description": "Sort order: 'score' (default), 'permits', or 'recent'",
+          "default": "score"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "name",
+        "state",
+        "city",
+        "specialty",
+        "min_permits",
+        "min_score",
+        "sort",
+        "page",
+        "per_page"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "get_contractor",
+      "method": "GET",
+      "path": "/v1/contractors/{contractor_id}",
+      "description": "Get a contractor's full profile with permit stats.\n\n`phone` and `email` are contractor contact fields gated to the Developer plan and up\n(see /v1/billing/plans for current pricing); on free/indie/hobbyist they return null.\n`name`, `license_number`, `specialties`, `city`/`state`/`address`, and the stats are\navailable on all plans.",
+      "summary": "Get Contractor",
+      "tags": [
+        "Contractors"
+      ],
+      "properties": {
+        "contractor_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "contractor_id"
+      ],
+      "pathParams": [
+        "contractor_id"
+      ],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "get_contractor_permits",
+      "method": "GET",
+      "path": "/v1/contractors/{contractor_id}/permits",
+      "description": "Get all permits associated with a contractor.",
+      "summary": "Get Contractor Permits",
+      "tags": [
+        "Contractors"
+      ],
+      "properties": {
+        "contractor_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 25,
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "contractor_id"
+      ],
+      "pathParams": [
+        "contractor_id"
+      ],
+      "queryParams": [
+        "page",
+        "per_page"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "get_property_history",
+      "method": "GET",
+      "path": "/v1/property/history",
+      "description": "Complete construction history + property profile for an address.\n\nMatches every permit whose street address contains the supplied address;\npass `city`/`state`/`zip` to disambiguate the same street number across\nmetros. Returns a derived profile (permit timeline, category breakdown,\ncontractors, and underwriting signals such as solar/roof/pool age) plus\nthe paginated permit records.\n\nAn address with **no** permits returns `found: false` with an empty\nprofile (HTTP 200) \u2014 a clean property is a valid, useful answer, not an\nerror.",
+      "summary": "Get Property History",
+      "tags": [
+        "Property History"
+      ],
+      "properties": {
+        "address": {
+          "type": "string",
+          "description": "Street address to look up (e.g. '123 Main St')",
+          "minLength": 3
+        },
+        "city": {
+          "type": "string",
+          "description": "Optional city to disambiguate identical street addresses"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2,
+          "description": "Optional 2-letter state code"
+        },
+        "zip": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 10,
+          "description": "Optional ZIP (prefix-matched)"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 200
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Alias of per_page."
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "pathParams": [],
+      "queryParams": [
+        "address",
+        "city",
+        "state",
+        "zip",
+        "page",
+        "per_page",
+        "limit"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "get_property_by_parcel",
+      "method": "GET",
+      "path": "/v1/property/by-parcel",
+      "description": "Complete construction history + property profile for a parcel / APN.\n\nLooks up every permit whose source parcel number matches `parcel`, with\nformatting ignored, so an APN from a county appraiser matches regardless of how\nthe permit feed punctuates it. Pass `state` to disambiguate the same parcel\nnumber used by different counties. Returns the same profile shape as /history\n(timeline, category breakdown, contractors, and roof/solar/HVAC age signals).\n\nParcel coverage spans the county / appraiser / GIS sources that publish a parcel\nid; a handful of Accela-sourced jurisdictions omit parcel in their public export\nand won't match here (use /property/history by address for those).\n\nA parcel with **no** permits returns `found: false` (HTTP 200), not an error.",
+      "summary": "Get Property By Parcel",
+      "tags": [
+        "Property History"
+      ],
+      "properties": {
+        "parcel": {
+          "type": "string",
+          "description": "Parcel number / APN / folio. Formatting is ignored \u2014 dashes, dots and spaces are stripped before matching.",
+          "minLength": 3
+        },
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2,
+          "description": "Optional 2-letter state to disambiguate the same parcel number across counties"
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1
+        },
+        "per_page": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 200
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Alias of per_page."
+        }
+      },
+      "required": [
+        "parcel"
+      ],
+      "pathParams": [],
+      "queryParams": [
+        "parcel",
+        "state",
+        "page",
+        "per_page",
+        "limit"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "list_webhooks",
+      "method": "GET",
+      "path": "/v1/webhooks/",
+      "description": "List all your registered webhooks.",
+      "summary": "List Webhooks",
+      "tags": [
+        "Webhooks"
+      ],
+      "properties": {},
+      "required": [],
+      "pathParams": [],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "create_webhook",
+      "method": "POST",
+      "path": "/v1/webhooks/",
+      "description": "Register a webhook to be notified when new permits match your filters.\n\nAvailable on the Developer plan and above (see /v1/billing/plans for current\npricing). Maximum 10 webhooks per API key.\nWhen a new permit matches your filters, we'll POST the permit data as JSON to your URL.\nSet contractor_name to track a specific company \u2014 you'll get a POST within minutes\nof any permit they pull appearing in our data (competitor tracking).",
+      "summary": "Create Webhook",
+      "tags": [
+        "Webhooks"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 1,
+          "maxLength": 2083
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "zip_code": {
+          "type": "string"
+        },
+        "keyword": {
+          "type": "string"
+        },
+        "contractor_name": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 255,
+          "description": "Fire only for permits pulled by contractors whose name contains this text (case-insensitive) \u2014 track a competitor or partner in real time."
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "pathParams": [],
+      "queryParams": [],
+      "bodyParams": [
+        "url",
+        "city",
+        "state",
+        "category",
+        "zip_code",
+        "keyword",
+        "contractor_name"
+      ]
+    },
+    {
+      "name": "delete_webhook",
+      "method": "DELETE",
+      "path": "/v1/webhooks/{webhook_id}",
+      "description": "Delete a webhook.",
+      "summary": "Delete Webhook",
+      "tags": [
+        "Webhooks"
+      ],
+      "properties": {
+        "webhook_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "webhook_id"
+      ],
+      "pathParams": [
+        "webhook_id"
+      ],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "test_webhook",
+      "method": "POST",
+      "path": "/v1/webhooks/{webhook_id}/test",
+      "description": "Send a test event to a webhook URL.\n\nUseful for verifying your webhook endpoint is reachable and signature \nvalidation works. Sends a fake permit payload with event=permit.test.",
+      "summary": "Test Webhook",
+      "tags": [
+        "Webhooks"
+      ],
+      "properties": {
+        "webhook_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "webhook_id"
+      ],
+      "pathParams": [
+        "webhook_id"
+      ],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "get_webhook_secret",
+      "method": "GET",
+      "path": "/v1/webhooks/{webhook_id}/secret",
+      "description": "Retrieve your webhook signing secret. Use this to validate signatures.\n\nThe X-PermitStack-Signature header on incoming webhook requests is the\nHMAC-SHA256 of the request body using this secret. Verify before \nprocessing to ensure the request came from PermitStack.",
+      "summary": "Get Webhook Secret",
+      "tags": [
+        "Webhooks"
+      ],
+      "properties": {
+        "webhook_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "webhook_id"
+      ],
+      "pathParams": [
+        "webhook_id"
+      ],
+      "queryParams": [],
+      "bodyParams": []
+    },
+    {
+      "name": "metrics_monthly",
+      "method": "GET",
+      "path": "/v1/metrics/monthly",
+      "description": "Monthly permit counts and total valuation for a city/state/category.\n\nAvailable on the Developer plan and above (see /v1/billing/plans for current pricing).\n\nServed from a nightly rollup, so it answers in milliseconds where the equivalent\nsearch-and-count takes seconds. At least one of `state` or `city` is required: an\nunfiltered national series would be a different (and much larger) product.",
+      "summary": "Metrics Monthly",
+      "tags": [
+        "Metrics",
+        "Metrics"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2,
+          "description": "Two-letter state code, e.g. FL"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name; case-insensitive"
+        },
+        "category": {
+          "type": "string",
+          "description": "Permit category, e.g. ROOFING"
+        },
+        "months": {
+          "type": "integer",
+          "description": "How many trailing months to return",
+          "default": 24,
+          "minimum": 1,
+          "maximum": 120
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "state",
+        "city",
+        "category",
+        "months"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "metrics_current",
+      "method": "GET",
+      "path": "/v1/metrics/current",
+      "description": "Category breakdown over a trailing window \u2014 the 'what is happening here now' view.\n\nAvailable on the Developer plan and above (see /v1/billing/plans for current pricing).",
+      "summary": "Metrics Current",
+      "tags": [
+        "Metrics",
+        "Metrics"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "city": {
+          "type": "string"
+        },
+        "days": {
+          "type": "integer",
+          "description": "Trailing window. Rounded to whole months by the rollup.",
+          "default": 90,
+          "minimum": 28,
+          "maximum": 730
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "state",
+        "city",
+        "days"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "metrics_cities",
+      "method": "GET",
+      "path": "/v1/metrics/cities",
+      "description": "Busiest cities in a state \u2014 the ranking customers were building by hand.\n\nAvailable on the Developer plan and above (see /v1/billing/plans for current pricing).",
+      "summary": "Metrics Cities",
+      "tags": [
+        "Metrics",
+        "Metrics"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "category": {
+          "type": "string"
+        },
+        "months": {
+          "type": "integer",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 120
+        },
+        "limit": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "pathParams": [],
+      "queryParams": [
+        "state",
+        "category",
+        "months",
+        "limit"
+      ],
+      "bodyParams": []
+    },
+    {
+      "name": "get_coverage",
+      "method": "GET",
+      "path": "/v1/permits/stats/coverage",
+      "description": "Get coverage statistics \u2014 total permits, jurisdictions, and breakdown by city.",
+      "summary": "Get Coverage Stats",
+      "tags": [
+        "Permits"
+      ],
+      "properties": {},
+      "required": [],
+      "pathParams": [],
+      "queryParams": [],
+      "bodyParams": [],
+      "alias_of": "get_coverage_stats"
+    },
+    {
+      "name": "get_permit_trend",
+      "method": "GET",
+      "path": "/v1/metrics/monthly",
+      "description": "Monthly permit counts and total valuation for a city/state/category.\n\nAvailable on the Developer plan and above (see /v1/billing/plans for current pricing).\n\nServed from a nightly rollup, so it answers in milliseconds where the equivalent\nsearch-and-count takes seconds. At least one of `state` or `city` is required: an\nunfiltered national series would be a different (and much larger) product.",
+      "summary": "Metrics Monthly",
+      "tags": [
+        "Metrics",
+        "Metrics"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2,
+          "description": "Two-letter state code, e.g. FL"
+        },
+        "city": {
+          "type": "string",
+          "description": "City name; case-insensitive"
+        },
+        "category": {
+          "type": "string",
+          "description": "Permit category, e.g. ROOFING"
+        },
+        "months": {
+          "type": "integer",
+          "description": "How many trailing months to return",
+          "default": 24,
+          "minimum": 1,
+          "maximum": 120
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "state",
+        "city",
+        "category",
+        "months"
+      ],
+      "bodyParams": [],
+      "alias_of": "metrics_monthly"
+    },
+    {
+      "name": "get_permit_totals",
+      "method": "GET",
+      "path": "/v1/metrics/current",
+      "description": "Category breakdown over a trailing window \u2014 the 'what is happening here now' view.\n\nAvailable on the Developer plan and above (see /v1/billing/plans for current pricing).",
+      "summary": "Metrics Current",
+      "tags": [
+        "Metrics",
+        "Metrics"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "city": {
+          "type": "string"
+        },
+        "days": {
+          "type": "integer",
+          "description": "Trailing window. Rounded to whole months by the rollup.",
+          "default": 90,
+          "minimum": 28,
+          "maximum": 730
+        }
+      },
+      "required": [],
+      "pathParams": [],
+      "queryParams": [
+        "state",
+        "city",
+        "days"
+      ],
+      "bodyParams": [],
+      "alias_of": "metrics_current"
+    },
+    {
+      "name": "get_busiest_cities",
+      "method": "GET",
+      "path": "/v1/metrics/cities",
+      "description": "Busiest cities in a state \u2014 the ranking customers were building by hand.\n\nAvailable on the Developer plan and above (see /v1/billing/plans for current pricing).",
+      "summary": "Metrics Cities",
+      "tags": [
+        "Metrics",
+        "Metrics"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2
+        },
+        "category": {
+          "type": "string"
+        },
+        "months": {
+          "type": "integer",
+          "default": 12,
+          "minimum": 1,
+          "maximum": 120
+        },
+        "limit": {
+          "type": "integer",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 500
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "pathParams": [],
+      "queryParams": [
+        "state",
+        "category",
+        "months",
+        "limit"
+      ],
+      "bodyParams": [],
+      "alias_of": "metrics_cities"
+    }
+  ]
+}

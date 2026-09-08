@@ -1,0 +1,49 @@
+{
+  "name": "permitstack-mcp",
+  "version": "2.0.0",
+  "description": "Remote MCP server for the PermitStack building permit API — every public API call, plus a Streamable HTTP endpoint for Claude web.",
+  "type": "module",
+  "bin": {
+    "permitstack-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "src/openapi-ops.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && cp src/openapi-ops.json dist/openapi-ops.json",
+    "start": "node dist/http.js",
+    "start:stdio": "node dist/index.js",
+    "dev": "tsc --watch",
+    "test": "node dist/smoke-test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "building-permits",
+    "permitstack",
+    "railway"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joshuaosborn561-lang/permitstack-mcp.git"
+  },
+  "homepage": "https://permit-stack.com",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
