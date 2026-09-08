@@ -14,10 +14,10 @@ Works two ways:
 1. Open [claude.ai/settings/connectors](https://claude.ai/settings/connectors)
 2. Click **Add custom connector**
 3. Name it `PermitStack`
-4. Paste the Railway URL:
+4. Paste this HTTPS URL:
 
 ```text
-https://YOUR-RAILWAY-DOMAIN.up.railway.app/mcp
+https://permitstack-mcp-production.up.railway.app/mcp
 ```
 
 5. Click **Add**, start a new chat, and enable the connector
@@ -96,7 +96,7 @@ railway variable set PERMITSTACK_API_KEY=pk_...
 railway domain
 ```
 
-Claude connector URL is `https://<railway-public-domain>/mcp`.
+Live Claude connector URL: `https://permitstack-mcp-production.up.railway.app/mcp`
 
 ## Auth
 
