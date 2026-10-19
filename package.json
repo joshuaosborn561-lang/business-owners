@@ -1,0 +1,43 @@
+{
+  "name": "business-owners-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "US business-owner lookup MCP — company + city + state → named officer for Email Finder name_company mode",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joshuaosborn561-lang/business-owners.git"
+  },
+  "type": "module",
+  "bin": {
+    "business-owners-mcp": "./dist/mcp/stdio.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server/index.js",
+    "dev": "tsx watch src/server/index.ts",
+    "mcp": "tsx src/mcp/stdio.ts",
+    "mcp:stdio": "node dist/mcp/stdio.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "owner-lookup-sample": "tsx scripts/owner_lookup_sample.ts",
+    "test": "tsx --test src/server/lib/retry.test.ts src/server/lib/stateOwners/names.test.ts src/server/lib/stateOwners/http.test.ts src/server/lib/stateOwners/sos/catalog.test.ts src/server/lib/stateOwners/sos/caBizfile.test.ts src/server/lib/stateOwners/sos/caSi.test.ts src/server/lib/stateOwners/sos/caBatch.test.ts src/server/lib/stateOwners/sos/officers.test.ts src/server/lib/stateOwners/sos/ilDta.test.ts src/server/lib/stateOwners/sos/htmlStates.test.ts src/server/lib/stateOwners/sos/agentStates.test.ts src/server/lib/stateOwners/sos/ocr.test.ts src/server/lib/stateOwners/sos/apifyPlaywright.test.ts src/server/lib/stateOwners/sos/sampleCsv.test.ts src/server/lib/stateOwners/sos/serperOwners.test.ts src/server/lib/stateOwners/sos/confidence.test.ts src/server/lib/stateOwners/sos/dbaResolver.test.ts src/server/lib/stateOwners/sos/agentFallback.test.ts src/server/services/lookupBusinessOwner.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@supabase/supabase-js": "^2.49.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "undici": "^7.30.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
