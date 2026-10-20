@@ -97,5 +97,6 @@ describe('CA BizFile fixture (synthetic)', () => {
     assert.equal(result.coverage_reason, null);
     assert.ok(result.people.some((p) => isWaterfallReady(p) && p.last_name === 'SAMPLE'));
     assert.equal(result.source, 'ca_bizfile');
+    assert.match(result.people[0]?.title || '', /chief executive|ceo/i);
   });
 });

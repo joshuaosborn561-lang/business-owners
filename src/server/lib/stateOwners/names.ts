@@ -234,6 +234,35 @@ const TITLE_AS_NAME_WORDS = new Set(
   'owner president ceo cfo coo founder director manager officer secretary treasurer partner principal vice'.split(' '),
 );
 
+/** Owner-type titles used for About-page adjacency (not VP/CFO). */
+export const OWNER_TYPE_TITLE_RE =
+  /\b(owners?|founders?|president|ceo|chief\s+executive(?:\s+officer)?|principals?)\b/i;
+
+export function isOwnerTypeTitle(title: string): boolean {
+  const t = String(title || '')
+    .toLowerCase()
+    .replace(/[-./]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!t) return false;
+  if (/\bvice\b/.test(t) && /\bpresident\b/.test(t)) return false;
+  if (/\bvp\b/.test(t)) return false;
+  if (/\b(cfo|chief\s+financial|coo|chief\s+operating)\b/.test(t)) return false;
+  return OWNER_TYPE_TITLE_RE.test(t);
+}
+
+export function isJobTitlePersonName(raw: string): boolean {
+  const tokens = String(raw || '')
+    .split(/[\s,|/–—-]+/)
+    .map((t) => t.toLowerCase().replace(/[^a-z]/g, ''))
+    .filter(Boolean);
+  if (!tokens.length) return true;
+  const titled = tokens.filter((t) => TITLE_AS_NAME_WORDS.has(t));
+  if (titled.length === tokens.length) return true;
+  if (tokens.length <= 2 && titled.length >= 1) return true;
+  return false;
+}
+
 const NAV_PHRASES =
   /\b(us and our|about us|contact us|sign in|log in|tenant portal|privacy policy|terms of (?:use|service)|cookie policy|meet (?:the )?team)\b/i;
 
@@ -320,6 +349,62 @@ export function validateWebsitePersonName(
   return validateOfficerPersonName(kept.join(' '), extraPlaces);
 }
 
+const TITLE_ADJ_NAME = '([A-Z][A-Za-z\'.-]{1,30}(?:\\s+[A-Z][A-Za-z\'.-]{1,30}){1,2})';
+const TITLE_ADJ_TITLE =
+  '([Oo]wners?|[Ff]ounders?|[Pp]resident|[Cc][Ee][Oo]|[Cc]hief\\s+[Ee]xecutive(?:\\s+[Oo]fficer)?|[Pp]rincipals?)';
+
+/**
+ * 2 name-like tokens sitting next to an owner-type title (Owner/Founder/President/CEO/Principal).
+ * Keeps the website junk filter. Does not treat Vice President as an owner title.
+ */
+export function extractTitleAdjacentPeople(text: string): Array<{ name: string; title: string }> {
+  const raw = String(text || '').replace(/\r/g, '');
+  const out: Array<{ name: string; title: string }> = [];
+  const seen = new Set<string>();
+  const push = (name: string, title: string) => {
+    if (!isOwnerTypeTitle(title)) return;
+    const tokens = String(name || '').split(/\s+/).filter(Boolean);
+    if (tokens.length < 2 || tokens.some((t) => !/^[A-Z]/.test(t) || !isNameLikeToken(t))) return;
+    const verdict = validateWebsitePersonName(tokens.join(' '));
+    if (!verdict.ok || !verdict.first_name || !verdict.last_name) return;
+    const key = `${verdict.first_name}|${verdict.last_name}`.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name: verdict.full_name, title: title.replace(/\s+/g, ' ').trim() || 'Owner' });
+  };
+
+  const nameThenTitle = new RegExp(`${TITLE_ADJ_NAME}\\s*[,–—:\\-]\\s*(?![Vv]ice\\s)${TITLE_ADJ_TITLE}\\b`, 'g');
+  for (const m of raw.matchAll(nameThenTitle)) {
+    push(m[1] || '', m[2] || 'Owner');
+  }
+  const titleThenName = new RegExp(`(?<![Vv]ice\\s)\\b${TITLE_ADJ_TITLE}\\s*[:–—\\-]?\\s*${TITLE_ADJ_NAME}`, 'g');
+  for (const m of raw.matchAll(titleThenName)) {
+    push(m[2] || '', m[1] || 'Owner');
+  }
+
+  const lines = raw
+    .split('\n')
+    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    const a = lines[i];
+    const b = lines[i + 1];
+    const aTitleLine = isOwnerTypeTitle(a) && a.split(/\s+/).length <= 4;
+    const bTitleLine = isOwnerTypeTitle(b) && b.split(/\s+/).length <= 4;
+    if (aTitleLine && !bTitleLine) push(b, a);
+    else if (bTitleLine && !aTitleLine) push(a, b);
+  }
+  return out;
+}
+
+/** True when page text contains the person's first+last as adjacent tokens. */
+export function pageMentionsPerson(text: string, first: string | null | undefined, last: string | null | undefined): boolean {
+  const f = String(first || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&').trim();
+  const l = String(last || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&').trim();
+  if (!f || !l) return false;
+  return new RegExp(`\\b${f}\\s+${l}\\b`, 'i').test(String(text || ''));
+}
+
 export function looksLastFirstCaps(name: string): boolean {
   const cleaned = String(name || '').replace(/\s+/g, ' ').trim();
   if (!cleaned || cleaned.includes(',')) return false;
@@ -388,15 +473,36 @@ export function shortenedCompanySearchName(name: string): string {
 export function companySearchQueries(name: string): string[] {
   const core = coreCompanySearchName(name);
   const short = shortenedCompanySearchName(name);
+  const punct = core
+    .replace(/&/g, ' AND ')
+    .replace(/[^A-Za-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const q of [core, short]) {
+  for (const q of [core, short, punct]) {
     const key = q.replace(/\s+/g, ' ').trim();
     if (!key) continue;
     const id = key.toUpperCase();
     if (seen.has(id)) continue;
     seen.add(id);
     out.push(key);
+  }
+  return out;
+}
+
+/** SOS search variants: trade name, then optional DBA-resolved legal name. */
+export function sosSearchQueries(name: string, legalName?: string | null): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of [name, legalName]) {
+    if (!raw) continue;
+    for (const q of companySearchQueries(raw)) {
+      const id = q.toUpperCase();
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(q);
+    }
   }
   return out;
 }

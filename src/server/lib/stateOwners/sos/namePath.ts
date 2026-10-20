@@ -11,13 +11,14 @@ import {
 import { fetchCaStatementOfficers } from './caSi.js';
 import type { LookupContext } from './context.js';
 import { ensureIlDtaIndex, matchIlDta, IL_DTA_HOME } from './ilDta.js';
-import { HTML_REGISTRY_STATES, resolveHtmlOfficerState, type HtmlOfficerState } from './htmlStates.js';
+import { resolveHtmlOfficerState, usesHtmlOfficerAdapter } from './htmlStates.js';
 import { domainFromWebsite } from './siteFetch.js';
 import { resolveColoradoAgentOnly, resolveOhioAgentOnly } from './agentStates.js';
 import { hitsFromRoster } from './officers.js';
 import { SERPER_USD_PER_QUERY } from './spend.js';
 import { resolveSerperOwner, serperIsHighConfidence } from './serperOwners.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
+import { attachConfidence } from './confidence.js';
 import { agentOnlyHit, isWaterfallReady, samePerson } from './waterfall.js';
 
 export function emptyNameResult(
@@ -213,8 +214,8 @@ async function resolveOfficialNameLookup(
 
   if (state === 'CA') return resolveCalifornia(input, ctx);
   if (state === 'IL') return resolveIllinois(input, ctx);
-  if ((HTML_REGISTRY_STATES as readonly string[]).includes(state)) {
-    return resolveHtmlOfficerState(input, state as HtmlOfficerState, ctx);
+  if (usesHtmlOfficerAdapter(state)) {
+    return resolveHtmlOfficerState(input, state, ctx);
   }
   if (state === 'OH') return resolveOhioAgentOnly(input, ctx);
   if (state === 'CO') return resolveColoradoAgentOnly(input, ctx);
@@ -274,27 +275,51 @@ export async function resolveNameLookup(
   }
 
   const dba = await resolveDbaLegalName(input, ctx);
-  const lookupInput: NameLookupInput =
-    dba.legal_name && dba.legal_name !== company
-      ? { ...input, company_name: dba.legal_name }
-      : input;
+  const legalName = dba.legal_name && dba.legal_name !== company ? dba.legal_name : null;
 
-  const serper = await resolveSerperOwner(lookupInput, ctx);
+  const serper = await resolveSerperOwner(input, ctx);
   if (serperIsHighConfidence(serper)) {
     return withDba(serper, dba);
   }
 
-  const official = await resolveOfficialNameLookup(lookupInput, ctx);
+  let official = await resolveOfficialNameLookup(input, ctx);
+  if (
+    legalName &&
+    official.coverage_reason !== 'blocked' &&
+    !official.people.some((p) => isWaterfallReady(p))
+  ) {
+    const retry = await resolveOfficialNameLookup({ ...input, company_name: legalName }, ctx);
+    const retryReady = retry.people.some((p) => isWaterfallReady(p));
+    const officialReady = official.people.some((p) => isWaterfallReady(p));
+    if (retryReady || (!officialReady && retry.people.length > official.people.length) || (!official.people.length && retry.coverage_reason == null)) {
+      official = {
+        ...retry,
+        apify_usd: Number(((official.apify_usd || 0) + (retry.apify_usd || 0)).toFixed(4)),
+        via_apify: Boolean(official.via_apify || retry.via_apify),
+        ocr_used: Boolean(official.ocr_used || retry.ocr_used),
+      };
+    } else {
+      official = {
+        ...official,
+        apify_usd: Number(((official.apify_usd || 0) + (retry.apify_usd || 0)).toFixed(4)),
+        via_apify: Boolean(official.via_apify || retry.via_apify),
+      };
+    }
+  }
   if (official.people.some((p) => isWaterfallReady(p))) {
     return withDba(withSerperMeta(official, serper), dba);
   }
 
   if (needsAgentFallback(official) || needsAgentFallback(serper)) {
-    const fallback = await resolveAgentFallback(lookupInput, ctx);
+    const fallback = await resolveAgentFallback(input, ctx, [...serper.people, ...official.people]);
     for (const person of fallback.people) {
       if (person.source !== 'website') continue;
       if (serper.people.some((p) => samePerson(p, person)) || official.people.some((p) => samePerson(p, person))) {
         person.corroborated = true;
+        Object.assign(
+          person,
+          attachConfidence(person, { title_leadership: true, city_match: true, corroborated: true }),
+        );
       }
     }
     if (fallback.people.some((p) => isWaterfallReady(p))) {

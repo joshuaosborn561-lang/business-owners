@@ -20,7 +20,14 @@ export const CA_BATCH_PAGE_LOAD_TIMEOUT_SECS = 180;
 export const CA_BATCH_SESSION_POOL = 'ca_bizfile_sticky';
 export const CA_BATCH_PROXY_SESSION = 'caBizfileSticky1';
 
-const ALLOWED_ACTORS = new Set([APIFY_PLAYWRIGHT_ACTOR, APIFY_PLAYWRIGHT_ACTOR_ID, 'apify/web-scraper', 'apify~web-scraper']);
+const ALLOWED_ACTORS = new Set([
+  APIFY_PLAYWRIGHT_ACTOR,
+  APIFY_PLAYWRIGHT_ACTOR_ID,
+  APIFY_WEB_FETCH_ACTOR,
+  APIFY_WEB_FETCH_ACTOR_ID,
+  'apify/web-scraper',
+  'apify~web-scraper',
+]);
 const HYBRID_ACTORS = new Set([
   APIFY_PLAYWRIGHT_ACTOR,
   APIFY_PLAYWRIGHT_ACTOR_ID,
@@ -183,10 +190,52 @@ function batchKey(pageFunction: string): string {
  * Never paid Store officer datasets. Refused runs (no token, cap, failed start)
  * do not increment spend. Many startUrls share one actor run.
  */
+function htmlFromWebFetchItem(item: Record<string, unknown> | undefined): { html: string; text: string; contentType?: string } {
+  const rec = item || {};
+  const html = String(rec.html || rec.body || rec.rawHtml || rec.raw_html || '');
+  const text = String(rec.text || rec.markdown || rec.content || '');
+  return { html, text, contentType: rec.contentType ? String(rec.contentType) : rec.content_type ? String(rec.content_type) : undefined };
+}
+
+/**
+ * Cheaper blocked-page fetch: apify/web-fetch + residential. Playwright is the
+ * follow-up when this returns empty or still looks blocked.
+ */
+export async function apifyWebFetchHtml(url: string, ctx?: LookupContext): Promise<ApifyHtmlResult> {
+  const run = await runApifyActorRaw(ctx, {
+    actorId: APIFY_WEB_FETCH_ACTOR_ID,
+    input: {
+      url,
+      urls: [url],
+      startUrls: [{ url }],
+      formats: ['html', 'text', 'markdown', 'raw'],
+      proxyConfiguration: {
+        useApifyProxy: true,
+        apifyProxyGroups: ['RESIDENTIAL'],
+        apifyProxyCountry: 'US',
+      },
+    },
+    estimateUsd: APIFY_USD_PER_BLOCKED_LOOKUP,
+    lookups: 1,
+    pollMaxMs: 4 * 60 * 1000,
+  });
+  const parsed = htmlFromWebFetchItem(run.items[0]);
+  const html = parsed.html || (parsed.text ? `<html><body>${parsed.text}</body></html>` : '');
+  return {
+    html,
+    text: parsed.text,
+    usd: run.usd,
+    cu: run.cu,
+    runId: run.runId,
+    refused: run.refused && !html,
+    contentType: parsed.contentType,
+  };
+}
+
 export async function apifyFetchHtml(
   url: string,
   ctx?: LookupContext,
-  opts?: { pageFunction?: string; immediate?: boolean; documentBytes?: boolean },
+  opts?: { pageFunction?: string; immediate?: boolean; documentBytes?: boolean; preferWebFetch?: boolean },
 ): Promise<ApifyHtmlResult> {
   if (ctx?.apifyFetchHtml) {
     const got = await ctx.apifyFetchHtml(url);
@@ -218,6 +267,11 @@ export async function apifyFetchHtml(
   if (spend.wouldExceed(APIFY_USD_PER_BLOCKED_LOOKUP)) {
     spend.refuse();
     return emptyRefused();
+  }
+
+  if (opts?.preferWebFetch && !opts?.pageFunction && !opts?.documentBytes) {
+    const web = await apifyWebFetchHtml(url, ctx);
+    if (!web.refused && (web.html || web.text)) return web;
   }
 
   const pageFunction = opts?.documentBytes ? DOCUMENT_BYTES_PAGE_FUNCTION : opts?.pageFunction || PAGE_FUNCTION;

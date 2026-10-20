@@ -10,6 +10,8 @@ export interface ConfidenceInput {
   serper_score?: number;
   dba_resolved?: boolean;
   title_leadership?: boolean;
+  corroborated?: boolean;
+  slug_agreed?: boolean;
 }
 
 const SOURCE_BASE: Partial<Record<BoardSource, number>> = {
@@ -47,10 +49,14 @@ export function scoreOwnerConfidence(input: ConfidenceInput): { band: OwnerConfi
   if (typeof input.serper_score === 'number') {
     score = Math.max(score, input.serper_score);
   }
+  if (input.slug_agreed && input.source === 'linkedin') {
+    score = Math.max(score, 0.8);
+  }
 
   score = Math.max(0, Math.min(1, Number(score.toFixed(3))));
   if (input.source === 'website') {
-    score = Math.min(score, 0.6);
+    if (input.corroborated) score = Math.max(score, 0.82);
+    else score = Math.min(score, 0.6);
   }
   const band: OwnerConfidence = score >= 0.8 ? 'high' : score >= 0.55 ? 'medium' : 'low';
   return { band, score };
@@ -66,6 +72,8 @@ export function attachConfidence<T extends WaterfallOwnerHit>(hit: T, extra?: Pa
     serper_score: extra?.serper_score,
     dba_resolved: extra?.dba_resolved,
     title_leadership: extra?.title_leadership,
+    corroborated: extra?.corroborated ?? hit.corroborated,
+    slug_agreed: extra?.slug_agreed,
   });
   return {
     ...hit,

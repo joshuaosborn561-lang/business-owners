@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  APIFY_WEB_FETCH_ACTOR_ID,
   assertAllowedApifyActor,
   assertAllowedHybridActor,
   apifyFetchHtml,
@@ -11,6 +12,7 @@ import { ApifySpendTracker } from './spend.js';
 describe('Apify policy', () => {
   it('allows playwright-scraper and forbids paid officer datasets', () => {
     assert.doesNotThrow(() => assertAllowedApifyActor('apify/playwright-scraper'));
+    assert.doesNotThrow(() => assertAllowedApifyActor('apify/web-fetch'));
     assert.throws(() => assertAllowedApifyActor('open-sos-data/officers'), PaidDatasetForbiddenError);
   });
 
@@ -132,5 +134,47 @@ describe('Apify policy', () => {
     );
     assert.equal(got.usd, 0);
     assert.equal(spend.usd, 0);
+  });
+
+  it('tries apify/web-fetch before playwright when preferWebFetch is set', async () => {
+    const spend = new ApifySpendTracker();
+    const actors: string[] = [];
+    const fetchFn: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes('/acts/') && init?.method === 'POST') {
+        const actor = url.includes('web-fetch') ? 'web-fetch' : 'playwright';
+        actors.push(actor);
+        if (actor === 'web-fetch') {
+          return new Response(
+            JSON.stringify({
+              data: {
+                id: 'run-web',
+                status: 'SUCCEEDED',
+                defaultDatasetId: 'ds-web',
+                usageTotalUsd: 0.015,
+              },
+            }),
+            { status: 201, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response('nope', { status: 404 });
+      }
+      if (url.includes('/datasets/ds-web/items')) {
+        return new Response(JSON.stringify([{ url: 'https://example.test/sos', html: '<html>officers</html>' }]), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('[]', { headers: { 'content-type': 'application/json' } });
+    };
+    const got = await apifyFetchHtml(
+      'https://example.test/sos',
+      { live: true, apifyToken: 'token', spend, fetch: fetchFn },
+      { preferWebFetch: true, immediate: true },
+    );
+    assert.equal(actors[0], 'web-fetch');
+    assert.equal(got.html.includes('officers'), true);
+    assert.ok(got.usd > 0);
+    assert.equal(actors.includes('playwright'), false);
+    assert.match(APIFY_WEB_FETCH_ACTOR_ID, /web-fetch/);
   });
 });

@@ -1,11 +1,15 @@
-import { htmlToText } from '../names.js';
+import { htmlToText, sosSearchQueries } from '../names.js';
 import { isChallengePage } from '../http.js';
 import type { LookupContext } from './context.js';
 import { fetchOfficialPage } from './htmlFetch.js';
 import { pickBestEntityMatch } from './match.js';
 import { hitsFromRoster, parseOfficerRoster } from './officers.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
-import { catalogByCode } from './catalog.js';
+import {
+  AGENT_ONLY_SKIP_CODES,
+  OFFICER_PUBLISHING_CODES,
+  catalogByCode,
+} from './catalog.js';
 import { isEmptyJsShell, resolveArizona, AZ_SEARCH_UI } from './azCenter.js';
 
 interface SearchHit {
@@ -23,7 +27,15 @@ const UT_SEARCH = 'https://businessregistration.utah.gov/EntitySearch/OnlineEnti
 const WA_SEARCH = 'https://ccfs.sos.wa.gov/';
 
 export const HTML_REGISTRY_STATES = ['GA', 'NC', 'AZ', 'TX', 'MN', 'UT', 'WA'] as const;
-export type HtmlOfficerState = (typeof HTML_REGISTRY_STATES)[number];
+export type HtmlOfficerState = (typeof HTML_REGISTRY_STATES)[number] | string;
+
+const HTML_ADAPTER_SKIP = new Set(['CA', 'IL', 'OH', 'CO', 'OK', ...AGENT_ONLY_SKIP_CODES]);
+
+export function usesHtmlOfficerAdapter(state: string): boolean {
+  if ((HTML_REGISTRY_STATES as readonly string[]).includes(state)) return true;
+  if (HTML_ADAPTER_SKIP.has(state)) return false;
+  return (OFFICER_PUBLISHING_CODES as readonly string[]).includes(state);
+}
 
 function absUrl(href: string, base: string): string {
   try {
@@ -33,33 +45,74 @@ function absUrl(href: string, base: string): string {
   }
 }
 
+function looksNavLabel(name: string): boolean {
+  return /^(search|home|login|help|privacy|next|previous|register|click here|more|view|details?)$/i.test(name);
+}
+
 export function parseSearchResultLinks(html: string, base: string): SearchHit[] {
   const rows: SearchHit[] = [];
   const seen = new Set<string>();
   if (isChallengePage(html) || isEmptyJsShell(html)) return rows;
-  for (const m of String(html || '').matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
-    const href = m[1] || '';
-    const name = htmlToText(m[2] || '').replace(/\s+/g, ' ').trim();
-    if (!name || name.length < 3 || name.length > 120) continue;
-    if (/^search|home|login|help|privacy|next|previous$/i.test(name)) continue;
-    const lower = href.toLowerCase();
-    if (
-      !/business|profile|detail|entity|information|controln|id=|coa|taxpayer|ccfs|mbls|filing|account|entitysearch/i.test(
-        lower,
-      ) &&
-      !/Business/i.test(href)
-    ) {
-      continue;
-    }
+
+  const push = (name: string, href: string, city?: string | null) => {
+    const cleaned = htmlToText(name).replace(/\s+/g, ' ').trim();
+    if (!cleaned || cleaned.length < 3 || cleaned.length > 120) return;
+    if (looksNavLabel(cleaned)) return;
+    if (!href || /^(javascript:|#|mailto:)/i.test(href)) return;
     const url = absUrl(href, base);
-    if (seen.has(url)) continue;
+    if (!url || seen.has(url)) return;
+    const lower = href.toLowerCase();
+    const looksDetail =
+      /business|profile|detail|entity|information|controln|id=|coa|taxpayer|ccfs|mbls|filing|account|entitysearch|inquiry|corpsearch|beSearch|cis|sos/i.test(
+        lower,
+      ) || /Business/i.test(href);
+    const looksEntity = /\b(llc|inc|corp|ltd|llp|pllc|pc|pa|company|co)\b/i.test(cleaned) || cleaned.split(' ').length >= 2;
+    if (!looksDetail && !looksEntity) return;
     seen.add(url);
-    rows.push({ name, url });
+    rows.push({ name: cleaned, url, city: city || null });
+  };
+
+  for (const m of String(html || '').matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    push(m[2] || '', m[1] || '');
   }
+
+  for (const row of String(html || '').matchAll(/<tr[\s\S]*?<\/tr>/gi)) {
+    const href = row[0].match(/href=["']([^"']+)["']/i)?.[1] || '';
+    const cells = [...row[0].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) =>
+      htmlToText(c[1] || '').replace(/\s+/g, ' ').trim(),
+    );
+    const nameCell = cells.find((c) => c.length >= 3 && !looksNavLabel(c)) || '';
+    const cityCell =
+      cells.find((c) => c !== nameCell && /^[A-Za-z .'-]{3,40}$/.test(c) && !/\b(llc|inc|corp)\b/i.test(c)) || null;
+    if (href && nameCell) push(nameCell, href, cityCell);
+  }
+
+  for (const m of String(html || '').matchAll(/data-(?:href|url|entity-url)=["']([^"']+)["'][^>]*>([\s\S]*?)</gi)) {
+    push(m[2] || '', m[1] || '');
+  }
+
   return rows;
 }
 
-function searchUrlFor(state: string, company: string): { url: string; base: string } {
+function originOf(url: string, fallback: string): string {
+  try {
+    return new URL(url).origin + '/';
+  } catch {
+    return fallback;
+  }
+}
+
+function txSearchUrls(company: string): Array<{ url: string; base: string }> {
+  const q = encodeURIComponent(company.trim());
+  const base = 'https://mycpa.cpa.state.tx.us/';
+  return [
+    { url: `${TX_SEARCH}?name=${q}`, base },
+    { url: `${TX_SEARCH}?searchBy=taxpayerName&taxpayerName=${q}`, base },
+    { url: `https://mycpa.cpa.state.tx.us/coa/search.do?entityName=${q}`, base },
+  ];
+}
+
+export function searchUrlFor(state: string, company: string): { url: string; base: string } {
   const q = encodeURIComponent(company.trim());
   if (state === 'GA') {
     return {
@@ -73,12 +126,7 @@ function searchUrlFor(state: string, company: string): { url: string; base: stri
       base: 'https://www.sosnc.gov/',
     };
   }
-  if (state === 'TX') {
-    return {
-      url: `${TX_SEARCH}?name=${q}`,
-      base: 'https://mycpa.cpa.state.tx.us/',
-    };
-  }
+  if (state === 'TX') return txSearchUrls(company)[0];
   if (state === 'MN') {
     return {
       url: `${MN_SEARCH}?searchType=BusinessName&searchValue=${q}`,
@@ -97,10 +145,27 @@ function searchUrlFor(state: string, company: string): { url: string; base: stri
       base: 'https://ccfs.sos.wa.gov/',
     };
   }
-  return {
-    url: `${AZ_SEARCH}?q=${q}`,
-    base: 'https://arizonabusinesscenter.azcc.gov/',
-  };
+  if (state === 'AZ') {
+    return {
+      url: `${AZ_SEARCH}?q=${q}`,
+      base: 'https://arizonabusinesscenter.azcc.gov/',
+    };
+  }
+  if (state === 'FL') {
+    return {
+      url: `https://search.sunbiz.org/Inquiry/CorporationSearch/SearchResults?inquiryType=EntityName&searchTerm=${q}`,
+      base: 'https://search.sunbiz.org/',
+    };
+  }
+  const entry = catalogByCode().get(state);
+  const search = entry?.search_url || 'https://example.invalid/';
+  const joiner = search.includes('?') ? '&' : '?';
+  return { url: `${search}${joiner}name=${q}`, base: originOf(search, search) };
+}
+
+function searchAttempts(state: string, company: string): Array<{ url: string; base: string }> {
+  if (state === 'TX') return txSearchUrls(company);
+  return [searchUrlFor(state, company)];
 }
 
 function blockedResult(
@@ -117,6 +182,23 @@ function blockedResult(
   };
 }
 
+function pickFromLinks(input: NameLookupInput, links: SearchHit[], query: string) {
+  const targets = sosSearchQueries(query);
+  let best: ReturnType<typeof pickBestEntityMatch<SearchHit>> = null;
+  for (const target of targets) {
+    const picked = pickBestEntityMatch(target, links, {
+      legalNameOf: (r) => r.name,
+      city: input.city,
+      cityOf: (r) => r.city,
+      allowTrigram: true,
+    });
+    if (!picked) continue;
+    if (!best || picked.score > best.score) best = picked;
+    if (picked.method === 'exact' || picked.method === 'substring') return picked;
+  }
+  return best;
+}
+
 export async function resolveHtmlOfficerState(
   input: NameLookupInput,
   state: HtmlOfficerState,
@@ -124,105 +206,105 @@ export async function resolveHtmlOfficerState(
 ): Promise<NameLookupResult> {
   if (state === 'AZ') return resolveArizona(input, ctx);
 
-  const entry = catalogByCode().get(state)!;
-  const sourceUrl = entry.search_url;
-  const { url, base } = searchUrlFor(state, input.company_name);
-  const search = await fetchOfficialPage(url, ctx, {
-    state,
-    allowApify: true,
-    input,
-    kind: 'search',
-  });
-  let viaApify = search.via_apify;
-  let usd = search.usd;
-  if (search.blocked || isChallengePage(search.body)) {
-    return blockedResult(sourceUrl, { via_apify: viaApify, apify_usd: usd });
-  }
-  if (!search.body) {
-    return {
-      people: [],
-      coverage_reason: 'not_found',
-      source: 'us_sos',
-      source_url: sourceUrl,
-      implemented: true,
-      via_apify: viaApify,
-      apify_usd: usd,
-    };
-  }
+  const entry = catalogByCode().get(state);
+  const sourceUrl = entry?.search_url || searchUrlFor(state, input.company_name).url;
+  const queries = sosSearchQueries(input.company_name);
+  let viaApify = false;
+  let usd = 0;
+  let lastBlockedUrl: string | null = null;
 
-  const links = parseSearchResultLinks(search.body, base);
-  // Never match the input name against itself when the SOS page had no result links.
-  const picked = pickBestEntityMatch(input.company_name, links, {
-    legalNameOf: (r) => r.name,
-    city: input.city,
-    cityOf: (r) => r.city,
-    allowTrigram: true,
-  });
-  if (!picked) {
-    return {
-      people: [],
-      coverage_reason: 'not_found',
-      source: 'us_sos',
-      source_url: sourceUrl,
-      implemented: true,
-      via_apify: viaApify,
-      apify_usd: usd,
-    };
-  }
+  for (const query of queries) {
+    const attempts = searchAttempts(state, query);
+    for (const { url, base } of attempts) {
+      const search = await fetchOfficialPage(url, ctx, {
+        state,
+        allowApify: true,
+        input,
+        kind: 'search',
+      });
+      viaApify = viaApify || search.via_apify;
+      usd += search.usd;
+      if (search.blocked || isChallengePage(search.body)) {
+        lastBlockedUrl = sourceUrl;
+        break;
+      }
+      if (!search.body) continue;
 
-  let detailBody = search.body;
-  let detailUrl = search.url;
-  if (picked.item.url && picked.item.url !== url) {
-    const detail = await fetchOfficialPage(picked.item.url, ctx, {
-      state,
-      allowApify: true,
-      input,
-      kind: 'detail',
-    });
-    viaApify = viaApify || detail.via_apify;
-    usd += detail.usd;
-    if (detail.blocked || isChallengePage(detail.body)) {
-      return blockedResult(picked.item.url, {
-        via_apify: viaApify,
-        apify_usd: usd,
+      const links = parseSearchResultLinks(search.body, base);
+      const picked = pickFromLinks(input, links, query);
+      if (!picked) continue;
+
+      let detailBody = search.body;
+      let detailUrl = search.url;
+      if (picked.item.url && picked.item.url !== url) {
+        const detail = await fetchOfficialPage(picked.item.url, ctx, {
+          state,
+          allowApify: true,
+          input,
+          kind: 'detail',
+        });
+        viaApify = viaApify || detail.via_apify;
+        usd += detail.usd;
+        if (detail.blocked || isChallengePage(detail.body)) {
+          return blockedResult(picked.item.url, {
+            via_apify: viaApify,
+            apify_usd: usd,
+            match_method: picked.method,
+            match_score: picked.score,
+            business_name: picked.item.name,
+          });
+        }
+        if (detail.body) {
+          detailBody = detail.body;
+          detailUrl = detail.url;
+        }
+      }
+      if (isChallengePage(detailBody)) {
+        return blockedResult(detailUrl, { via_apify: viaApify, apify_usd: usd, business_name: picked.item.name });
+      }
+      const entries = parseOfficerRoster(detailBody);
+      const people = hitsFromRoster(input, entries, 'us_sos', detailUrl, picked.method, {
+        cityMatch: Boolean(input.city && picked.item.city && input.city.toLowerCase() === String(picked.item.city).toLowerCase()),
+      });
+      if (!people.length) {
+        return {
+          people: [],
+          coverage_reason: 'agent_only',
+          source: 'us_sos',
+          source_url: detailUrl,
+          implemented: true,
+          match_method: picked.method,
+          match_score: picked.score,
+          business_name: picked.item.name,
+          via_apify: viaApify,
+          apify_usd: usd,
+        };
+      }
+      return {
+        people,
+        coverage_reason: null,
+        source: 'us_sos',
+        source_url: detailUrl,
+        implemented: true,
         match_method: picked.method,
         match_score: picked.score,
         business_name: picked.item.name,
-      });
+        via_apify: viaApify,
+        apify_usd: usd,
+      };
     }
-    if (detail.body) {
-      detailBody = detail.body;
-      detailUrl = detail.url;
-    }
+    if (lastBlockedUrl) break;
   }
-  if (isChallengePage(detailBody)) {
-    return blockedResult(detailUrl, { via_apify: viaApify, apify_usd: usd, business_name: picked.item.name });
-  }
-  const entries = parseOfficerRoster(detailBody);
-  const people = hitsFromRoster(input, entries, 'us_sos', detailUrl, picked.method);
-  if (!people.length) {
-    return {
-      people: [],
-      coverage_reason: 'agent_only',
-      source: 'us_sos',
-      source_url: detailUrl,
-      implemented: true,
-      match_method: picked.method,
-      match_score: picked.score,
-      business_name: picked.item.name,
-      via_apify: viaApify,
-      apify_usd: usd,
-    };
+
+  if (lastBlockedUrl) {
+    return blockedResult(lastBlockedUrl, { via_apify: viaApify, apify_usd: usd });
   }
   return {
-    people,
-    coverage_reason: null,
+    people: [],
+    coverage_reason: 'not_found',
     source: 'us_sos',
-    source_url: detailUrl,
+    source_url: sourceUrl,
     implemented: true,
-    match_method: picked.method,
-    match_score: picked.score,
-    business_name: picked.item.name,
     via_apify: viaApify,
     apify_usd: usd,
   };

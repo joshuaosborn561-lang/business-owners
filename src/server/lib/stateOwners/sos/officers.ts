@@ -33,11 +33,17 @@ const TITLE_ROLE: Array<{ re: RegExp; role: OwnerRole }> = [
 
 const TITLE =
   'Chief\\s+Executive\\s+Officer|Chief\\s+Financial\\s+Officer|Chief\\s+Operating\\s+Officer|' +
-  'President|Vice\\s+President|Secretary|Treasurer|Directors?|Managers?|Managing\\s+Member|Member|' +
-  'CEO|CFO|COO|VP|Governor|Partner|Principal|Owner|Founder|Organizer|Officer';
+  'Vice\\s+President|Managing\\s+Member|Governing\\s+Persons?|' +
+  'President|Secretary|Treasurer|Directors?|Managers?|Member|' +
+  'CEO|CFO|COO|VP|Governor|Partner|Principal|Owner|Founder|Organizer|' +
+  'Officer';
 
 function caseInsensitiveTokenChars(raw: string): string {
-  return raw.replace(/[A-Za-z]/g, (ch) => `[${ch.toUpperCase()}${ch.toLowerCase()}]`);
+  // Keep regex escapes like `\s+` intact — replacing the `s` would turn whitespace into `\[Ss]+`.
+  return raw
+    .replace(/\\s/g, '\u0000')
+    .replace(/[A-Za-z]/g, (ch) => `[${ch.toUpperCase()}${ch.toLowerCase()}]`)
+    .replace(/\u0000/g, '\\s');
 }
 
 /** Title alts, case-insensitive without flipping the whole regex to /i/ (that would make [A-Z] eat lowercase). */
@@ -99,7 +105,7 @@ const MID_TOKEN = `(?:${CAP_TOKEN}|[A-Z]\\.)`;
  * Case-sensitive: lowercase review words cannot join the capture.
  */
 export const CAP_NAME_CAPTURE =
-  `(${CAP_TOKEN}\\s*,\\s*${MID_TOKEN}(?:\\s+${CAP_TOKEN})?|${CAP_TOKEN}\\s+${MID_TOKEN}(?:\\s+${CAP_TOKEN})?)`;
+  `(${CAP_TOKEN}[ \\t]*,[ \\t]*${MID_TOKEN}(?:[ \\t]+${CAP_TOKEN})?|${CAP_TOKEN}[ \\t]+${MID_TOKEN}(?:[ \\t]+${CAP_TOKEN})?)`;
 
 export function roleFromTitle(title: string): OwnerRole {
   for (const row of TITLE_ROLE) {
@@ -108,18 +114,23 @@ export function roleFromTitle(title: string): OwnerRole {
   return 'officer';
 }
 
-/** Lower is better. Owner/CEO/President beat CFO when picking the primary person. */
+/** Lower is better. Owner/CEO/President beat VP/CFO when picking the primary person. */
 export function officerPriority(title: string): number {
-  const t = String(title || '').toLowerCase();
+  const t = String(title || '')
+    .toLowerCase()
+    .replace(/[-./]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (/\b(owner|founder|sole\s+proprietor)\b/.test(t)) return 0;
   if (/\b(ceo|chief\s+executive)\b/.test(t)) return 1;
-  if (/\bpresident\b/.test(t) && !/\bvice\b/.test(t)) return 2;
-  if (/\b(managing\s+member|manager)\b/.test(t)) return 3;
-  if (/\b(member|director|governor|partner|principal)\b/.test(t)) return 4;
-  if (/\b(vice\s+president|\bvp\b)/.test(t)) return 6;
-  if (/\bsecretary\b/.test(t)) return 7;
-  if (/\b(cfo|chief\s+financial|treasurer)\b/.test(t)) return 8;
-  return 5;
+  if ((/\bvice\b/.test(t) && /\bpresident\b/.test(t)) || /\bvp\b/.test(t)) return 7;
+  if (/\bpresident\b/.test(t)) return 2;
+  if (/\bprincipal\b/.test(t)) return 3;
+  if (/\b(managing\s+member|manager)\b/.test(t)) return 4;
+  if (/\b(member|director|governor|partner|governing\s+person)\b/.test(t)) return 5;
+  if (/\bsecretary\b/.test(t)) return 8;
+  if (/\b(cfo|chief\s+financial|treasurer|coo|chief\s+operating)\b/.test(t)) return 9;
+  return 6;
 }
 
 export function isOfficerTitle(title: string): boolean {
@@ -334,7 +345,7 @@ export function hitsFromRoster(
       match_method: matchMethod,
       city_match: Boolean(opts?.cityMatch),
       labeled,
-      title_leadership: /owner|founder|president|ceo/i.test(hit.title || ''),
+      title_leadership: officerPriority(hit.title || '') <= 3,
     });
   });
   return hits.sort((a, b) => officerPriority(a.title || '') - officerPriority(b.title || ''));

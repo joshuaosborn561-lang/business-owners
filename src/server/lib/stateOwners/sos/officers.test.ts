@@ -15,7 +15,16 @@ Registered Agent: CT CORPORATION SYSTEM
       rows.map((r) => r.name),
       ['JANE SAMPLE', 'JOHN SAMPLE'],
     );
+    assert.match(rows[0]?.title || '', /chief executive|ceo/i);
     assert.equal(rows[0]?.role, 'officer');
+    const mixed = parseOfficerRoster(`
+Chief Executive Officer: JANE SAMPLE
+Vice President: RIVER SAMPLE
+President: ALEX SAMPLE
+`);
+    assert.match(mixed.find((r) => r.name === 'JANE SAMPLE')?.title || '', /chief executive/i);
+    assert.match(mixed.find((r) => r.name === 'RIVER SAMPLE')?.title || '', /vice president/i);
+    assert.equal(mixed.find((r) => r.name === 'ALEX SAMPLE')?.title, 'President');
   });
 
   it('reads consecutive Directors and Managers names from an SI table', () => {
@@ -84,23 +93,26 @@ PAT MORGAN`;
     assert.equal(partial.some((p) => isWaterfallReady(p)), false);
   });
 
-  it('prefers owner/CEO/President over CFO when picking the primary person', () => {
+  it('prefers owner/CEO/President over VP/CFO when picking the primary person', () => {
     assert.ok(officerPriority('CEO') < officerPriority('CFO'));
     assert.ok(officerPriority('President') < officerPriority('Chief Financial Officer'));
+    assert.ok(officerPriority('President') < officerPriority('Vice President'));
+    assert.ok(officerPriority('Owner') < officerPriority('VP'));
+    assert.ok(officerPriority('Vice-President') > officerPriority('President'));
     const input = { company_name: 'Sample Builders LLC', city: 'Oakland', state: 'CA' };
     const hits = hitsFromRoster(
       input,
       [
-        { name: 'RIVER SAMPLE', title: 'CFO', role: 'officer', labeled: true },
+        { name: 'RIVER SAMPLE', title: 'Vice President', role: 'officer', labeled: true },
+        { name: 'ALEX SAMPLE', title: 'CFO', role: 'officer', labeled: true },
         { name: 'JANE SAMPLE', title: 'President', role: 'officer', labeled: true },
-        { name: 'ALEX SAMPLE', title: 'CEO', role: 'officer', labeled: true },
       ],
       'ca_bizfile',
       'https://example.test/si',
       'exact',
       { cityMatch: true },
     );
-    assert.equal(hits[0]?.title, 'CEO');
+    assert.equal(hits[0]?.title, 'President');
     assert.equal(hits[0]?.last_name, 'SAMPLE');
     assert.equal(hits[hits.length - 1]?.title, 'CFO');
   });

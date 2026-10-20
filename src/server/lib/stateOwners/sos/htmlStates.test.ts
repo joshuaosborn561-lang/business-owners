@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
-import { resolveHtmlOfficerState } from './htmlStates.js';
+import { resolveHtmlOfficerState, usesHtmlOfficerAdapter } from './htmlStates.js';
 import { resolveNameLookup } from './namePath.js';
+import { officerPriority } from './officers.js';
 import { isWaterfallReady } from './waterfall.js';
 import { emptyIlIndex, ingestIlDtaText } from './ilDta.js';
 
@@ -191,5 +192,84 @@ describe('HTML registry adapters', () => {
         `${row.state} should name an officer from the free official source`,
       );
     }
+  });
+
+  it('matches a punctuation/LLC-stripped SOS query against the registry legal name', async () => {
+    const result = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders, L.L.C.', city: 'Atlanta', state: 'GA' },
+      'GA',
+      {
+        live: false,
+        htmlFor: (_state, kind) => (kind === 'search' ? html('ga-search.html') : html('ga-detail.html')),
+      },
+    );
+    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE' && isWaterfallReady(p)));
+  });
+
+  it('retries SOS with the DBA-resolved legal name after a trade-name miss', async () => {
+    const htmlFor = (_state: string, kind: 'search' | 'detail' | 'document', _input: unknown, url?: string) => {
+      const q = decodeURIComponent(String(url || ''));
+      if (kind === 'search') {
+        if (/Sample Builders/i.test(q)) return html('ga-search.html');
+        return '<html><body><div>No records found</div></body></html>';
+      }
+      return html('ga-detail.html');
+    };
+    const result = await resolveNameLookup(
+      { company_name: 'Sample Crew', city: 'Atlanta', state: 'GA' },
+      {
+        live: true,
+        serperEnabled: true,
+        htmlFor,
+        serperOrganic: (query) => {
+          if (/LLC OR Inc/i.test(query) || /fictitious/i.test(query)) {
+            return {
+              organic: [
+                {
+                  title: 'Sample Builders LLC DBA Sample Crew',
+                  link: 'https://opencorporates.com/companies/us_ga/1',
+                  snippet: 'Legal name: Sample Builders LLC doing business as Sample Crew in Atlanta, GA.',
+                },
+              ],
+            };
+          }
+          return { organic: [] };
+        },
+      },
+    );
+    assert.equal(result.implemented, true);
+    assert.match(result.legal_name || '', /Sample Builders LLC/i);
+    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE'));
+  });
+
+  it('reads TX Comptroller franchise-tax officers and prefers President over VP/CFO', async () => {
+    const result = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Austin', state: 'TX' },
+      'TX',
+      {
+        live: false,
+        htmlFor: (_state, kind) => (kind === 'search' ? html('tx-search.html') : html('tx-coa-officers.html')),
+      },
+    );
+    assert.equal(result.people[0]?.title, 'President');
+    assert.equal(result.people[0]?.first_name, 'JANE');
+  });
+
+  it('uses the generic HTML adapter for other officer-publishing states', async () => {
+    assert.equal(usesHtmlOfficerAdapter('KY'), true);
+    assert.equal(usesHtmlOfficerAdapter('VA'), true);
+    assert.equal(usesHtmlOfficerAdapter('OK'), false);
+    const result = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Louisville', state: 'KY' },
+      'KY',
+      {
+        live: false,
+        htmlFor: (_state, kind) => (kind === 'search' ? html('ky-search.html') : html('ky-detail.html')),
+      },
+    );
+    assert.equal(result.implemented, true);
+    assert.equal(result.people[0]?.title, 'President');
+    assert.ok(officerPriority(result.people[0]?.title || '') < officerPriority('Vice President'));
+    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE' && isWaterfallReady(p)));
   });
 });

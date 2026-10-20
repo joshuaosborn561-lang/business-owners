@@ -19,6 +19,10 @@ import {
   splitPersonName,
   splitLegalAndDba,
   trigramSimilarity,
+  extractTitleAdjacentPeople,
+  isJobTitlePersonName,
+  isOwnerTypeTitle,
+  sosSearchQueries,
   flipLastFirstName,
   parsePersonFirstLast,
   stripDatesAndRegistryLabels,
@@ -91,6 +95,18 @@ describe('website person-name validator', () => {
     assert.equal(validateWebsitePersonName('Jane Sample 01/15/2024').ok, true);
     assert.equal(validateWebsitePersonName('01/15/2024').ok, false);
   });
+
+  it('accepts two name-like tokens adjacent to an owner-type title', () => {
+    const hits = extractTitleAdjacentPeople('The practice is run by Jane Sample, Owner in San Diego.');
+    assert.equal(hits.length >= 1, true);
+    assert.match(hits[0]?.name || '', /jane sample/i);
+    assert.match(hits[0]?.title || '', /owner/i);
+    assert.equal(isOwnerTypeTitle('President'), true);
+    assert.equal(isOwnerTypeTitle('Vice President'), false);
+    assert.equal(extractTitleAdjacentPeople('Vice President: Jane Sample').length, 0);
+    assert.equal(isJobTitlePersonName('Owner'), true);
+    assert.equal(isJobTitlePersonName('Jane Sample'), false);
+  });
 });
 
 describe('registry last-first and date labels', () => {
@@ -115,6 +131,9 @@ describe('company search query normalization', () => {
     const queries = companySearchQueries('Sample Builders LLC - Extra Marketing');
     assert.equal(queries[0], 'Sample Builders LLC');
     assert.ok(queries.includes('SAMPLE BUILDERS'));
+    const sos = sosSearchQueries('Sample Crew', 'Sample Builders, L.L.C.');
+    assert.ok(sos.some((q) => /sample crew/i.test(q)));
+    assert.ok(sos.some((q) => /sample builders/i.test(q)));
   });
 });
 

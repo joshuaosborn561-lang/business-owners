@@ -44,6 +44,9 @@ describe('IL DTA bulk files', () => {
     const hit = matchIlDta({ company_name: 'Sample HVAC LLC', city: 'Chicago', state: 'IL' }, index);
     assert.ok(hit);
     assert.equal(hit!.entity.officers[0]?.name, 'JANE SAMPLE');
+    const stripped = matchIlDta({ company_name: 'Sample HVAC', city: 'Chicago', state: 'IL' }, index);
+    assert.ok(stripped);
+    assert.equal(stripped!.entity.file_number, '20240001');
   });
 
   it('parses official DTA homepage zip links and auto-downloads them', async () => {

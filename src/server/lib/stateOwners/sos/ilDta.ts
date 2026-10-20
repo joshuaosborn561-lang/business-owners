@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { DESKTOP_UA, isChallengePage, looksBlocked } from '../http.js';
-import { isRegistryAgentName } from '../names.js';
+import { isRegistryAgentName, sosSearchQueries } from '../names.js';
 import type { LookupContext } from './context.js';
 import { ctxFetch } from './context.js';
 import { pickBestEntityMatch } from './match.js';
@@ -364,14 +364,19 @@ export function matchIlDta(
   input: NameLookupInput,
   index: IlDtaIndex,
 ): { entity: IlDtaEntity; score: number; method: 'exact' | 'substring' | 'trigram' } | null {
-  const hit = pickBestEntityMatch(input.company_name, index.list, {
-    legalNameOf: (r) => r.legal_name,
-    dbaNameOf: (r) => r.dba_name,
-    city: input.city,
-    cityOf: (r) => r.city,
-    zipOf: (r) => r.zip,
-    allowTrigram: true,
-  });
-  if (!hit) return null;
-  return { entity: hit.item, score: hit.score, method: hit.method };
+  let best: { entity: IlDtaEntity; score: number; method: 'exact' | 'substring' | 'trigram' } | null = null;
+  for (const query of sosSearchQueries(input.company_name)) {
+    const hit = pickBestEntityMatch(query, index.list, {
+      legalNameOf: (r) => r.legal_name,
+      dbaNameOf: (r) => r.dba_name,
+      city: input.city,
+      cityOf: (r) => r.city,
+      zipOf: (r) => r.zip,
+      allowTrigram: true,
+    });
+    if (!hit) continue;
+    if (!best || hit.score > best.score) best = { entity: hit.item, score: hit.score, method: hit.method };
+    if (hit.method === 'exact') return best;
+  }
+  return best;
 }

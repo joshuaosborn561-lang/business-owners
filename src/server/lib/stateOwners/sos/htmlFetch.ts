@@ -86,7 +86,7 @@ export async function fetchOfficialPage(
   if (!opts.allowApify || entry?.apify === 'never' || ctx?.apifyEnabled === false) {
     return { status, body: '', url, via_apify: false, blocked: true, usd: 0 };
   }
-  const got = await apifyFetchHtml(url, ctx);
+  const got = await apifyFetchHtml(url, ctx, { preferWebFetch: true });
   if (got.refused) {
     return { status: status || 0, body: '', url, via_apify: false, blocked: true, usd: 0 };
   }
