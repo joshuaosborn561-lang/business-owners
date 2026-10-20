@@ -19,7 +19,11 @@ import {
   splitPersonName,
   splitLegalAndDba,
   trigramSimilarity,
+  flipLastFirstName,
+  parsePersonFirstLast,
+  stripDatesAndRegistryLabels,
   validateOfficerPersonName,
+  validateWebsitePersonName,
 } from './names.js';
 import { sodaWhereContains, sodaWhereContainsLoose } from './soda.js';
 import { looksBlocked } from './http.js';
@@ -73,6 +77,33 @@ describe('officer person name validation', () => {
 
     assert.equal(validateOfficerPersonName('OAKLAND', ['Oakland']).reason, 'place');
     assert.equal(validateOfficerPersonName('JANE SAMPLE', ['Oakland']).ok, true);
+  });
+});
+
+describe('website person-name validator', () => {
+  it('requires 2+ name-like tokens and rejects nav, titles, and dates', () => {
+    assert.equal(validateWebsitePersonName('JANE SAMPLE').ok, true);
+    assert.equal(validateWebsitePersonName('Login Portal').ok, false);
+    assert.equal(validateWebsitePersonName('Tenant Portal').reason, 'nav');
+    assert.equal(validateWebsitePersonName('Careers').ok, false);
+    assert.equal(validateWebsitePersonName('Us And Our Team').ok, false);
+    assert.equal(validateWebsitePersonName('Owner President').reason, 'title');
+    assert.equal(validateWebsitePersonName('Jane Sample 01/15/2024').ok, true);
+    assert.equal(validateWebsitePersonName('01/15/2024').ok, false);
+  });
+});
+
+describe('registry last-first and date labels', () => {
+  it('strips dates/labels and flips LAST FIRST to First Last', () => {
+    assert.match(stripDatesAndRegistryLabels('Name SAMPLE JANE Filing Date 01/15/2024'), /SAMPLE JANE/);
+    assert.equal(/01\/15\/2024/.test(stripDatesAndRegistryLabels('Name SAMPLE JANE Filing Date 01/15/2024')), false);
+    assert.equal(flipLastFirstName('SAMPLE JANE'), 'JANE SAMPLE');
+    const parsed = parsePersonFirstLast('SAMPLE JANE', { lastFirst: true });
+    assert.equal(parsed.first_name, 'JANE');
+    assert.equal(parsed.last_name, 'SAMPLE');
+    const comma = parsePersonFirstLast('SAMPLE, JANE');
+    assert.equal(comma.first_name, 'JANE');
+    assert.equal(comma.last_name, 'SAMPLE');
   });
 });
 

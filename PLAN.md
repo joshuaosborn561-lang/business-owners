@@ -59,8 +59,8 @@ Wire these as SOS adapters (direct HTTP first, Apify HTML fallback only after Se
 
 | Code | Source | Why B |
 |------|--------|-------|
-| **FL** | Sunbiz HTML (reuse later; public SFTP has officers) | High volume, officers on record |
-| **TX** | Comptroller PIR (free) | Officers on franchise search; do not pay SOSDirect |
+| **FL** | Sunbiz HTML (reuse later; public SFTP has officers) | High volume, officers on record. Serper snippets: drop dates/labels, LAST FIRST → First Last. |
+| **TX** | Comptroller PIR (free HTML in this PR) | Officers on franchise search; do not pay SOSDirect |
 | **MA** | SOS corp search | Officers; Imperva — residential only if blocked |
 | **PA** | DOS business search | Officers; do not enable HIC/Turnstile |
 | **CT** | data.ct.gov master + principals | Open data join |
@@ -78,7 +78,9 @@ Wire these as SOS adapters (direct HTTP first, Apify HTML fallback only after Se
 | **WV** | apps.sos.wv.gov | Officers |
 | **HI** | hbe.ehawaii.gov | filings_pdf (like CA SI) |
 
-Rollout order inside B: FL, TX, MA, PA, then CT open data, then the HTML cluster.
+This PR wires direct HTML after a Serper miss for **TX, GA, IL (free DTA bulk), MN, UT, WA**. Apify only if blocked.
+
+Rollout order inside remaining B: FL, MA, PA, then CT open data, then the HTML cluster.
 
 ---
 
@@ -88,8 +90,8 @@ Build after B is hitting. Still no paid datasets.
 
 | Code | Constraint | Approach |
 |------|------------|----------|
-| **MN** | SOS portal challenged; DLI is permit-only (out of this repo) | HTML/Apify SOS governors after Serper |
-| **WA** | CCFS captcha; L&I is permit-only | SOS governors via Apify HTML fallback |
+| **MN** | SOS portal challenged | HTML/Apify SOS governors after Serper (wired) |
+| **WA** | CCFS captcha | SOS governors via Apify HTML fallback after Serper (wired) |
 | **OK** | Statutory $5 detail | Search-only + Serper/DBA/fallback. Do not scrape around the fee. |
 | **OR** | Open-data extract is agent-only | Treat as DBA + About/LinkedIn unless a free officer filing appears |
 | **LA** | Search gated; ~18/min if JSON | Paced HTML after Serper |
@@ -105,7 +107,7 @@ Build after B is hitting. Still no paid datasets.
 | Band | Score | Waterfall-ready |
 |------|-------|-----------------|
 | high | ≥ 0.8 | Yes (if name validates, not agent) |
-| medium | 0.55–0.79 | SOS substring / website About / LinkedIn with city match |
+| medium | 0.55–0.79 | SOS substring / LinkedIn with city match. Website/About is capped at 0.6 and not waterfall-ready unless a second source agrees. |
 | low | < 0.55 | No. Agents are 0.2 |
 
 Serper hits are waterfall-ready only at **high**. CA trigram is not ready unless the city also matches.

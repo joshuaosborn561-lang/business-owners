@@ -1,11 +1,15 @@
 import { isChallengePage } from '../http.js';
 import {
+  flipLastFirstName,
   hasCompanyWord,
   isPlaceName,
   isRegistryAgentName,
+  looksLastFirstCaps,
   namesMatchNormalized,
   normalizeCompanyName,
   normalizeState,
+  parseBoardPersonName,
+  parsePersonFirstLast,
   splitPersonName,
   trigramSimilarity,
   validateOfficerPersonName,
@@ -174,9 +178,28 @@ function stripTrailingGeo(name: string, input: NameLookupInput): string {
   return s;
 }
 
-function usablePersonName(name: string, company: string, input?: NameLookupInput): boolean {
+function normalizeSnippetPersonName(name: string, lastFirst: boolean): string {
+  let cleaned = name;
+  if (cleaned.includes(',')) {
+    const parsed = parseBoardPersonName(cleaned);
+    if (parsed.first_name && parsed.last_name) {
+      return `${parsed.first_name} ${parsed.last_name}`.trim();
+    }
+  }
+  if (lastFirst && looksLastFirstCaps(cleaned)) {
+    cleaned = flipLastFirstName(cleaned);
+  }
+  return cleaned;
+}
+
+function usablePersonName(
+  name: string,
+  company: string,
+  input?: NameLookupInput,
+  lastFirst = false,
+): boolean {
   const geoStripped = input ? stripTrailingGeo(name, input) : name;
-  const cleaned = scrubCapitalizedPersonName(geoStripped);
+  const cleaned = normalizeSnippetPersonName(scrubCapitalizedPersonName(geoStripped) || '', lastFirst);
   if (!cleaned) return false;
   if (isRegistryAgentName(cleaned)) return false;
   if (hasCompanyWord(cleaned)) return false;
@@ -186,13 +209,18 @@ function usablePersonName(name: string, company: string, input?: NameLookupInput
   return true;
 }
 
-function extraSnippetEntries(text: string, company: string, input?: NameLookupInput): RosterEntry[] {
+function extraSnippetEntries(
+  text: string,
+  company: string,
+  input?: NameLookupInput,
+  lastFirst = false,
+): RosterEntry[] {
   const out: RosterEntry[] = [];
   const seen = new Set<string>();
   const push = (name: string, title: string, labeled: boolean) => {
     const geoStripped = input ? stripTrailingGeo(name, input) : name;
-    const cleaned = scrubCapitalizedPersonName(geoStripped);
-    if (!cleaned || !usablePersonName(cleaned, company, input)) return;
+    const cleaned = normalizeSnippetPersonName(scrubCapitalizedPersonName(geoStripped) || '', lastFirst);
+    if (!cleaned || !usablePersonName(cleaned, company, input, lastFirst)) return;
     const key = cleaned.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
@@ -223,11 +251,17 @@ function extraSnippetEntries(text: string, company: string, input?: NameLookupIn
   return out;
 }
 
-export function officersFromSerperBlob(blob: string, company: string, input?: NameLookupInput): RosterEntry[] {
-  const roster = parseOfficerRoster(blob).filter(
-    (row) => usablePersonName(row.name, company, input) && row.role !== 'registered_agent',
-  );
-  const extra = extraSnippetEntries(blob, company, input);
+export function officersFromSerperBlob(
+  blob: string,
+  company: string,
+  input?: NameLookupInput,
+  opts?: { lastFirst?: boolean },
+): RosterEntry[] {
+  const lastFirst = opts?.lastFirst === true;
+  const roster = parseOfficerRoster(blob)
+    .map((row) => ({ ...row, name: normalizeSnippetPersonName(row.name, lastFirst) }))
+    .filter((row) => usablePersonName(row.name, company, input, lastFirst) && row.role !== 'registered_agent');
+  const extra = extraSnippetEntries(blob, company, input, lastFirst);
   const seen = new Set(roster.map((r) => r.name.toLowerCase()));
   for (const row of extra) {
     if (seen.has(row.name.toLowerCase())) continue;
@@ -345,7 +379,8 @@ export function candidatesFromOrganic(input: NameLookupInput, hit: SerperOrganic
   const stateOk = blobHasState(blob, input.state);
   if (!cityOk && !stateOk) return [];
 
-  const officers = officersFromSerperBlob(blob, input.company_name, input);
+  const lastFirst = /sunbiz\.org/i.test(url);
+  const officers = officersFromSerperBlob(blob, input.company_name, input, { lastFirst });
   const out: SerperCandidate[] = [];
   for (const entry of officers) {
     const scored = scoreEntry(input, entry, url, companyHit, cityOk, stateOk);
@@ -355,7 +390,7 @@ export function candidatesFromOrganic(input: NameLookupInput, hit: SerperOrganic
 }
 
 function hitFromCandidate(input: NameLookupInput, cand: SerperCandidate): WaterfallOwnerHit {
-  const split = splitPersonName(cand.entry.name);
+  const split = parsePersonFirstLast(cand.entry.name, { lastFirst: /sunbiz\.org/i.test(cand.source_url) });
   const role: OwnerRole = cand.entry.role;
   return {
     first_name: split.first_name,

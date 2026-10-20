@@ -62,4 +62,21 @@ describe('owner_lookup_sample helpers', () => {
     const csv = formatSampleCsv(lines);
     assert.match(csv, /^company,city,state,/);
   });
+
+  it('passes a website column through to domain/origin', async () => {
+    const { writeFileSync, mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'owners-csv-'));
+    const path = join(dir, 'in.csv');
+    writeFileSync(
+      path,
+      'company,city,state,website\nSample Harbor LLC,San Diego,CA,https://harbordental.example\n',
+      'utf8',
+    );
+    const rows = await readCompanyCsv(path);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].website, 'https://harbordental.example');
+    assert.equal(rows[0].domain, 'harbordental.example');
+  });
 });

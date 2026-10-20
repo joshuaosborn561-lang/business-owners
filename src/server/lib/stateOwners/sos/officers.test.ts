@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseOfficerRoster, rosterToPeople, hitsFromRoster } from './officers.js';
+import { officerPriority, parseOfficerRoster, rosterToPeople, hitsFromRoster } from './officers.js';
 import { isWaterfallReady } from './waterfall.js';
 
 describe('parseOfficerRoster', () => {
@@ -82,5 +82,26 @@ PAT MORGAN`;
     assert.equal(isWaterfallReady(withCity[0]!), true);
     const partial = hitsFromRoster(input, [{ name: 'JANE', title: 'CEO', role: 'officer' }], 'ca_bizfile', 'https://example.test/1', 'exact');
     assert.equal(partial.some((p) => isWaterfallReady(p)), false);
+  });
+
+  it('prefers owner/CEO/President over CFO when picking the primary person', () => {
+    assert.ok(officerPriority('CEO') < officerPriority('CFO'));
+    assert.ok(officerPriority('President') < officerPriority('Chief Financial Officer'));
+    const input = { company_name: 'Sample Builders LLC', city: 'Oakland', state: 'CA' };
+    const hits = hitsFromRoster(
+      input,
+      [
+        { name: 'RIVER SAMPLE', title: 'CFO', role: 'officer', labeled: true },
+        { name: 'JANE SAMPLE', title: 'President', role: 'officer', labeled: true },
+        { name: 'ALEX SAMPLE', title: 'CEO', role: 'officer', labeled: true },
+      ],
+      'ca_bizfile',
+      'https://example.test/si',
+      'exact',
+      { cityMatch: true },
+    );
+    assert.equal(hits[0]?.title, 'CEO');
+    assert.equal(hits[0]?.last_name, 'SAMPLE');
+    assert.equal(hits[hits.length - 1]?.title, 'CFO');
   });
 });

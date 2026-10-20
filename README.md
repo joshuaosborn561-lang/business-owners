@@ -18,10 +18,10 @@ HTTP: `POST /mcp` (Streamable HTTP), `GET /health`, `GET /mcp/health`. Stdio: `n
 
 ## Lookup order
 
-1. **DBA → legal name** (Serper-first): site footer / privacy / terms / copyright, then `"<name>" <city> LLC OR Inc`, then Google Maps/GBP, then free county fictitious-business-name snippets.
-2. **Serper owner** for every state. High confidence (≥0.8) can skip SOS.
-3. **Official SOS** for officer-publishing states. **CA hybrid:** `dz_omar/california-bizfile-scraper` then `apify/web-fetch` Statement of Information PDFs. Playwright UI is Incapsula-blocked (`ca_playwright` is opt-in).
-4. **Agent-only fallback:** About page → Serper LinkedIn (`owner OR founder OR president` + company + city) → find-named-person HTTP if `FIND_NAMED_PERSON_URL` is set.
+1. **DBA → legal name** (Serper-first): site footer / privacy / terms / copyright, then `"<name>" <city> LLC OR Inc`, then Google Maps/GBP, then free county fictitious-business-name snippets. Passes the input `website` column through.
+2. **Serper owner** for every state. High confidence (≥0.8) can skip SOS. Sunbiz snippets drop dates/labels and normalize LAST FIRST.
+3. **Official SOS** after a Serper miss, including free HTML/bulk for **TX, GA, IL, MN, UT, WA**. **CA hybrid:** `dz_omar/california-bizfile-scraper` then `apify/web-fetch` SI PDFs. CA prefers owner/CEO/President over CFO. Playwright UI is Incapsula-blocked (`ca_playwright` is opt-in).
+4. **Agent-only fallback:** About page (strict person-name validator; confidence ≤0.6, not waterfall-ready unless a second source agrees) → Serper LinkedIn (`owner OR founder OR president` + company + city) → find-named-person HTTP if `FIND_NAMED_PERSON_URL` is set.
 5. Every person gets a **confidence band + 0–1 score**. Registered agents are never waterfall-ready.
 
 Prefer **Serper over Apify**. Never paid Store datasets. `APIFY_MAX_USD` is a hard cap. Live probes: **≤5 companies**, `APIFY_MAX_USD=2`.

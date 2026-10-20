@@ -17,6 +17,21 @@ export function originFromDomain(domain: string | null | undefined): string | nu
   }
 }
 
+/** Prefer the CSV/MCP `website` column, then `domain`. */
+export function originFromInput(input: { website?: string | null; domain?: string | null }): string | null {
+  return originFromDomain(input.website) || originFromDomain(input.domain);
+}
+
+export function domainFromWebsite(website: string | null | undefined): string | null {
+  const origin = originFromDomain(website);
+  if (!origin) return null;
+  try {
+    return new URL(origin).hostname.replace(/^www\./i, '').toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchSiteText(
   url: string,
   ctx?: LookupContext,

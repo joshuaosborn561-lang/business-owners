@@ -20,7 +20,7 @@ const SOURCE_BASE: Partial<Record<BoardSource, number>> = {
   ma_sos: 0.84,
   pa_dos: 0.84,
   serper: 0.62,
-  website: 0.7,
+  website: 0.55,
   dba: 0.55,
   maps: 0.6,
   fbn: 0.72,
@@ -49,6 +49,9 @@ export function scoreOwnerConfidence(input: ConfidenceInput): { band: OwnerConfi
   }
 
   score = Math.max(0, Math.min(1, Number(score.toFixed(3))));
+  if (input.source === 'website') {
+    score = Math.min(score, 0.6);
+  }
   const band: OwnerConfidence = score >= 0.8 ? 'high' : score >= 0.55 ? 'medium' : 'low';
   return { band, score };
 }

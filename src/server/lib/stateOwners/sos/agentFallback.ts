@@ -1,12 +1,13 @@
-import { normalizeCompanyName, normalizeState, validateOfficerPersonName } from '../names.js';
+import { normalizeCompanyName, normalizeState, validateOfficerPersonName, validateWebsitePersonName } from '../names.js';
 import type { LookupContext } from './context.js';
 import { attachConfidence } from './confidence.js';
 import { lookupFindNamedPerson } from './findNamedPerson.js';
 import { officersFromSerperBlob } from './serperOwners.js';
 import { organicFromSerperPayload, serperSearch } from './serper.js';
 import { SERPER_USD_PER_QUERY } from './spend.js';
-import { fetchSiteText, originFromDomain } from './siteFetch.js';
+import { domainFromWebsite, fetchSiteText, originFromInput } from './siteFetch.js';
 import type { NameLookupInput, NameLookupResult, WaterfallOwnerHit } from './types.js';
+import { samePerson } from './waterfall.js';
 
 const ABOUT_PATHS = ['/about', '/about-us', '/our-story', '/team', '/our-team'];
 
@@ -18,7 +19,7 @@ export function linkedinOwnerQuery(input: NameLookupInput): string {
 }
 
 function hitFromAbout(input: NameLookupInput, name: string, title: string, url: string): WaterfallOwnerHit | null {
-  const verdict = validateOfficerPersonName(name, [input.city]);
+  const verdict = validateWebsitePersonName(name, [input.city]);
   if (!verdict.ok) return null;
   return attachConfidence(
     {
@@ -26,13 +27,14 @@ function hitFromAbout(input: NameLookupInput, name: string, title: string, url: 
       last_name: verdict.last_name,
       title: title || 'Owner',
       company_name: input.company_name,
-      domain: input.domain ?? null,
+      domain: input.domain ?? domainFromWebsite(input.website),
       source_url: url,
       confidence: 'medium',
       state: input.state,
       source: 'website',
       role: /founder/i.test(title) ? 'owner' : /president/i.test(title) ? 'officer' : 'owner',
       coverage_reason: null,
+      corroborated: false,
     },
     { title_leadership: true, city_match: true },
   );
@@ -56,7 +58,7 @@ function peopleFromAboutText(input: NameLookupInput, text: string, url: string):
 }
 
 async function fromAboutPage(input: NameLookupInput, ctx?: LookupContext): Promise<WaterfallOwnerHit | null> {
-  const origin = originFromDomain(input.domain);
+  const origin = originFromInput(input);
   if (!origin) return null;
   for (const path of ABOUT_PATHS) {
     const page = await fetchSiteText(`${origin}${path}`, ctx);
@@ -120,27 +122,41 @@ export async function resolveAgentFallback(
 ): Promise<NameLookupResult> {
   let credits = 0;
   const about = await fromAboutPage(input, ctx);
-  if (about) {
-    return {
-      people: [about],
-      coverage_reason: null,
-      source: 'website',
-      source_url: about.source_url,
-      implemented: true,
-      via_serper: false,
-      serper_credits: 0,
-      serper_usd: 0,
-    };
-  }
 
   const li = await fromLinkedInSerper(input, ctx);
   credits += li.credits;
+  if (about && li.hit && samePerson(about, li.hit)) {
+    about.corroborated = true;
+    li.hit.corroborated = true;
+    return {
+      people: [li.hit, about],
+      coverage_reason: null,
+      source: 'linkedin',
+      source_url: li.hit.source_url,
+      implemented: true,
+      via_serper: credits > 0,
+      serper_credits: credits,
+      serper_usd: Number((credits * SERPER_USD_PER_QUERY).toFixed(4)),
+    };
+  }
   if (li.hit) {
     return {
       people: [li.hit],
       coverage_reason: null,
       source: 'linkedin',
       source_url: li.hit.source_url,
+      implemented: true,
+      via_serper: credits > 0,
+      serper_credits: credits,
+      serper_usd: Number((credits * SERPER_USD_PER_QUERY).toFixed(4)),
+    };
+  }
+  if (about) {
+    return {
+      people: [about],
+      coverage_reason: null,
+      source: 'website',
+      source_url: about.source_url,
       implemented: true,
       via_serper: credits > 0,
       serper_credits: credits,

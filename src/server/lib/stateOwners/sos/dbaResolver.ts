@@ -6,7 +6,7 @@ import {
 } from '../names.js';
 import type { LookupContext } from './context.js';
 import { ctxSerper } from './context.js';
-import { copyrightLine, fetchSiteText, footerSlice, originFromDomain } from './siteFetch.js';
+import { copyrightLine, fetchSiteText, footerSlice, originFromInput } from './siteFetch.js';
 import { organicFromSerperPayload, serperPlaces, serperSearch } from './serper.js';
 import type { DbaSource, NameLookupInput, SerperOrganicHit } from './types.js';
 
@@ -131,7 +131,7 @@ export async function resolveDbaLegalName(
     };
   }
 
-  const origin = originFromDomain(input.domain);
+  const origin = originFromInput(input);
   if (origin) {
     const pages = ['', '/privacy', '/privacy-policy', '/terms', '/terms-of-service'];
     for (const path of pages) {

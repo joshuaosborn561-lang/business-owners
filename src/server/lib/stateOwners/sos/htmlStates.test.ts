@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { resolveHtmlOfficerState } from './htmlStates.js';
+import { resolveNameLookup } from './namePath.js';
 import { isWaterfallReady } from './waterfall.js';
+import { emptyIlIndex, ingestIlDtaText } from './ilDta.js';
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -12,7 +14,7 @@ function html(name: string): string {
   return readFileSync(join(dir, name), 'utf8');
 }
 
-describe('GA/NC/AZ HTML adapters', () => {
+describe('HTML registry adapters', () => {
   it('extracts GA officers from official HTML fixtures', async () => {
     const result = await resolveHtmlOfficerState(
       { company_name: 'Sample Builders LLC', city: 'Atlanta', state: 'GA' },
@@ -116,5 +118,78 @@ describe('GA/NC/AZ HTML adapters', () => {
     assert.equal(result.via_apify, true);
     assert.ok((result.apify_usd || 0) > 0);
     assert.ok(result.people.some((p) => p.last_name === 'SAMPLE'));
+  });
+
+  it('extracts TX Comptroller officers from official HTML fixtures', async () => {
+    const result = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Austin', state: 'TX' },
+      'TX',
+      {
+        live: false,
+        htmlFor: (_state, kind) => (kind === 'search' ? html('tx-search.html') : html('tx-detail.html')),
+      },
+    );
+    assert.equal(result.implemented, true);
+    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE' && p.first_name === 'JANE'));
+    assert.equal(result.people[0]?.title, 'President');
+  });
+
+  it('extracts MN, UT, and WA officers from official HTML fixtures', async () => {
+    const cases: Array<{ state: 'MN' | 'UT' | 'WA'; city: string; search: string; detail: string }> = [
+      { state: 'MN', city: 'Minneapolis', search: 'mn-search.html', detail: 'mn-detail.html' },
+      { state: 'UT', city: 'Salt Lake City', search: 'ut-search.html', detail: 'ut-detail.html' },
+      { state: 'WA', city: 'Seattle', search: 'wa-search.html', detail: 'wa-detail.html' },
+    ];
+    for (const row of cases) {
+      const result = await resolveHtmlOfficerState(
+        { company_name: 'Sample Builders LLC', city: row.city, state: row.state },
+        row.state,
+        {
+          live: false,
+          htmlFor: (_state, kind) => (kind === 'search' ? html(row.search) : html(row.detail)),
+        },
+      );
+      assert.ok(
+        result.people.some((p) => p.last_name === 'SAMPLE' && isWaterfallReady(p)),
+        `${row.state} should return a named officer`,
+      );
+    }
+  });
+
+  it('runs TX/GA/IL/MN/UT/WA official registries after a Serper miss', async () => {
+    const index = emptyIlIndex();
+    ingestIlDtaText(index, readFileSync(join(dir, 'il', 'officers.tsv'), 'utf8'), 'officers.tsv');
+    const htmlFor = (state: string, kind: 'search' | 'detail' | 'document') => {
+      const map: Record<string, [string, string]> = {
+        TX: ['tx-search.html', 'tx-detail.html'],
+        GA: ['ga-search.html', 'ga-detail.html'],
+        MN: ['mn-search.html', 'mn-detail.html'],
+        UT: ['ut-search.html', 'ut-detail.html'],
+        WA: ['wa-search.html', 'wa-detail.html'],
+      };
+      const pair = map[state];
+      if (!pair) return null;
+      return kind === 'search' ? html(pair[0]) : html(pair[1]);
+    };
+    const rows: Array<{ state: string; city: string; company: string }> = [
+      { state: 'TX', city: 'Austin', company: 'Sample Builders LLC' },
+      { state: 'GA', city: 'Atlanta', company: 'Sample Builders LLC' },
+      { state: 'IL', city: 'Chicago', company: 'Sample HVAC LLC' },
+      { state: 'MN', city: 'Minneapolis', company: 'Sample Builders LLC' },
+      { state: 'UT', city: 'Salt Lake City', company: 'Sample Builders LLC' },
+      { state: 'WA', city: 'Seattle', company: 'Sample Builders LLC' },
+    ];
+    for (const row of rows) {
+      const result = await resolveNameLookup(
+        { company_name: row.company, city: row.city, state: row.state },
+        { live: false, serperEnabled: false, ilIndex: index, htmlFor },
+      );
+      assert.equal(result.implemented, true, `${row.state} should be implemented`);
+      assert.notEqual(result.coverage_reason, 'not_implemented', `${row.state} must not stay not_implemented`);
+      assert.ok(
+        result.people.some((p) => p.last_name === 'SAMPLE' || p.last_name === 'PUBLIC'),
+        `${row.state} should name an officer from the free official source`,
+      );
+    }
   });
 });

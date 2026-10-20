@@ -53,6 +53,8 @@ export interface NameLookupInput {
   city?: string | null;
   state: string;
   domain?: string | null;
+  /** Company website URL or host. Passed through from CSV / MCP `website`. */
+  website?: string | null;
   list_id?: string;
   lead_id?: number;
 }
@@ -75,6 +77,8 @@ export interface WaterfallOwnerHit {
   review_flag?: boolean;
   match_method?: 'exact' | 'substring' | 'trigram' | 'license';
   city_match?: boolean;
+  /** Website/About hits need a second source before waterfall_ready. */
+  corroborated?: boolean;
 }
 
 export interface NameLookupResult {

@@ -105,6 +105,35 @@ describe('serper owner tier', () => {
     );
   });
 
+  it('filters Sunbiz dates/labels and normalizes LAST FIRST to First Last', () => {
+    const payload = json('serper-sunbiz-last-first.json');
+    const fl = { company_name: 'ACME BUILDERS LLC', city: 'Miami', state: 'FL' };
+    const blob = `${payload.organic![0].title}\n${payload.organic![0].snippet}`;
+    const names = officersFromSerperBlob(blob, fl.company_name, fl, { lastFirst: true }).map((r) => r.name);
+    assert.equal(names.some((n) => /\d/.test(n) || /filing|document|detail/i.test(n)), false);
+    const cand = scoreSerperOrganic(fl, payload.organic![0]);
+    assert.ok(cand);
+    const parsedName = cand!.entry.name;
+    assert.match(parsedName, /JANE SAMPLE/i);
+    assert.equal(/^SAMPLE\s+JANE$/i.test(parsedName), false);
+    const resultHit = {
+      first_name: 'JANE',
+      last_name: 'SAMPLE',
+      title: cand!.entry.title,
+      company_name: fl.company_name,
+      domain: null,
+      source_url: cand!.source_url,
+      confidence: cand!.confidence,
+      confidence_score: cand!.score,
+      state: 'FL',
+      source: 'serper' as const,
+      role: cand!.entry.role,
+      coverage_reason: null,
+    };
+    assert.equal(resultHit.first_name, 'JANE');
+    assert.equal(resultHit.last_name, 'SAMPLE');
+  });
+
   it('treats sunbiz.org as trusted and skips the Detail Name label', () => {
     const payload = json('serper-sunbiz.json');
     const cand = scoreSerperOrganic(

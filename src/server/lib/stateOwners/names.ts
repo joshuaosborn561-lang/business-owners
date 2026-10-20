@@ -118,7 +118,7 @@ export interface OfficerNameVerdict {
   last_name: string | null;
   full_name: string;
   review_flag: boolean;
-  reason?: 'place' | 'company' | 'partial' | 'invalid';
+  reason?: 'place' | 'company' | 'partial' | 'invalid' | 'nav' | 'date' | 'title';
 }
 
 /**
@@ -167,6 +167,193 @@ export function validateOfficerPersonName(
     full_name: split.full_name_raw || full_name,
     review_flag: false,
   };
+}
+
+const MONTH_TOKENS = new Set(
+  'jan january feb february mar march apr april may jun june jul july aug august sep sept september oct october nov november dec december'.split(
+    ' ',
+  ),
+);
+
+const WEBSITE_NAV_WORDS = new Set(
+  [
+    'login',
+    'log',
+    'signin',
+    'signup',
+    'sign',
+    'register',
+    'portal',
+    'careers',
+    'career',
+    'jobs',
+    'job',
+    'tenant',
+    'tenants',
+    'menu',
+    'home',
+    'about',
+    'contact',
+    'privacy',
+    'terms',
+    'cookie',
+    'cookies',
+    'subscribe',
+    'newsletter',
+    'apply',
+    'account',
+    'dashboard',
+    'search',
+    'help',
+    'faq',
+    'blog',
+    'news',
+    'us',
+    'our',
+    'and',
+    'the',
+    'team',
+    'staff',
+    'leadership',
+    'more',
+    'read',
+    'learn',
+    'click',
+    'here',
+    'page',
+    'site',
+    'website',
+    'welcome',
+    'open',
+    'view',
+    'see',
+  ].map((s) => s.toLowerCase()),
+);
+
+const TITLE_AS_NAME_WORDS = new Set(
+  'owner president ceo cfo coo founder director manager officer secretary treasurer partner principal vice'.split(' '),
+);
+
+const NAV_PHRASES =
+  /\b(us and our|about us|contact us|sign in|log in|tenant portal|privacy policy|terms of (?:use|service)|cookie policy|meet (?:the )?team)\b/i;
+
+const DATE_TOKEN =
+  /^(?:\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{4}|(?:19|20)\d{2})$/;
+
+const REGISTRY_LABEL_RE =
+  /\b(filing date|document number|detail name|entity name|principal address|mailing address|fei\/ein(?: number)?|status|title|name|officer name|full name|business name|legal name|authorized person|registered agent)\b/gi;
+
+/** Drop dates and SOS column labels so they never become person tokens. */
+export function stripDatesAndRegistryLabels(raw: string): string {
+  return String(raw || '')
+    .replace(REGISTRY_LABEL_RE, ' ')
+    .replace(/\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2},?\s+\d{4}\b/gi, ' ')
+    .replace(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g, ' ')
+    .replace(/\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function isDateToken(token: string): boolean {
+  const t = String(token || '').trim();
+  if (!t) return false;
+  if (DATE_TOKEN.test(t)) {
+    if (/^\d{4}$/.test(t)) {
+      const n = Number(t);
+      return n >= 1900 && n <= 2100;
+    }
+    return true;
+  }
+  return MONTH_TOKENS.has(t.toLowerCase());
+}
+
+export function isWebsiteNavToken(token: string): boolean {
+  const lower = String(token || '')
+    .toLowerCase()
+    .replace(/[^a-z]+/g, '');
+  return Boolean(lower) && WEBSITE_NAV_WORDS.has(lower);
+}
+
+export function isNameLikeToken(token: string): boolean {
+  const t = String(token || '').trim();
+  if (!t) return false;
+  if (isDateToken(t)) return false;
+  const letters = t.replace(/[^A-Za-z]/g, '');
+  if (letters.length < 2) return false;
+  if (!/^[A-Za-z]/.test(t)) return false;
+  const lower = letters.toLowerCase();
+  if (WEBSITE_NAV_WORDS.has(lower)) return false;
+  if (TITLE_AS_NAME_WORDS.has(lower)) return false;
+  return true;
+}
+
+/**
+ * Strict About/website person names: 2+ name-like tokens. Rejects nav/menu
+ * words (login, portal, careers, tenant, us/our), titles, and dates.
+ */
+export function validateWebsitePersonName(
+  raw: string,
+  extraPlaces: Array<string | null | undefined> = [],
+): OfficerNameVerdict {
+  const stripped = stripPersonHonorifics(stripDatesAndRegistryLabels(raw));
+  const full = stripped.replace(/\s+/g, ' ').trim();
+  const empty: OfficerNameVerdict = {
+    ok: false,
+    first_name: null,
+    last_name: null,
+    full_name: full || String(raw || '').trim(),
+    review_flag: true,
+    reason: 'invalid',
+  };
+  if (!full) return empty;
+  if (NAV_PHRASES.test(full)) return { ...empty, reason: 'nav' };
+  const tokens = full.split(/\s+/).filter(Boolean);
+  if (tokens.some((t) => isDateToken(t))) return { ...empty, reason: 'date' };
+  if (tokens.every((t) => TITLE_AS_NAME_WORDS.has(t.toLowerCase().replace(/[^a-z]/g, '')))) {
+    return { ...empty, reason: 'title' };
+  }
+  const kept = tokens.filter((t) => isNameLikeToken(t));
+  if (kept.length < 2) {
+    const reason = tokens.some((t) => isWebsiteNavToken(t)) ? 'nav' : 'partial';
+    return { ...empty, reason };
+  }
+  return validateOfficerPersonName(kept.join(' '), extraPlaces);
+}
+
+export function looksLastFirstCaps(name: string): boolean {
+  const cleaned = String(name || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned || cleaned.includes(',')) return false;
+  const tokens = cleaned.split(' ');
+  if (tokens.length < 2 || tokens.length > 3) return false;
+  return tokens.every((t) => /^[A-Z][A-Z'.-]*$/.test(t.replace(/\./g, '')));
+}
+
+/** Sunbiz-style LAST FIRST [MI] → FIRST [MI] LAST. */
+export function flipLastFirstName(name: string): string {
+  const tokens = String(name || '')
+    .replace(/,/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 3) return String(name || '').trim();
+  return `${tokens.slice(1).join(' ')} ${tokens[0]}`.trim();
+}
+
+/** First/last from LAST, FIRST or optional LAST FIRST (all-caps registry order). */
+export function parsePersonFirstLast(raw: string, opts?: { lastFirst?: boolean }): SplitPersonName {
+  const cleaned = stripDatesAndRegistryLabels(raw);
+  if (cleaned.includes(',')) return parseBoardPersonName(cleaned);
+  if (opts?.lastFirst && looksLastFirstCaps(cleaned)) {
+    const tokens = tokenizeCapsName(cleaned);
+    return {
+      first_name: tokens.slice(1).join(' ') || null,
+      last_name: tokens[0] || null,
+      full_name_raw: cleaned,
+      review_flag: tokens.length < 2,
+    };
+  }
+  return splitPersonName(cleaned);
 }
 
 /**

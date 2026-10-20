@@ -17,6 +17,13 @@ interface SearchHit {
 const GA_SEARCH = 'https://ecorp.sos.ga.gov/BusinessSearch';
 const NC_SEARCH = 'https://www.sosnc.gov/online_services/search/by_title/_Business_Registration';
 const AZ_SEARCH = AZ_SEARCH_UI;
+const TX_SEARCH = 'https://mycpa.cpa.state.tx.us/coa/search.do';
+const MN_SEARCH = 'https://mblsportal.sos.state.mn.us/Business/Search';
+const UT_SEARCH = 'https://businessregistration.utah.gov/EntitySearch/OnlineEntitySearch';
+const WA_SEARCH = 'https://ccfs.sos.wa.gov/';
+
+export const HTML_REGISTRY_STATES = ['GA', 'NC', 'AZ', 'TX', 'MN', 'UT', 'WA'] as const;
+export type HtmlOfficerState = (typeof HTML_REGISTRY_STATES)[number];
 
 function absUrl(href: string, base: string): string {
   try {
@@ -36,7 +43,12 @@ export function parseSearchResultLinks(html: string, base: string): SearchHit[] 
     if (!name || name.length < 3 || name.length > 120) continue;
     if (/^search|home|login|help|privacy|next|previous$/i.test(name)) continue;
     const lower = href.toLowerCase();
-    if (!/business|profile|detail|entity|information|controln|id=/i.test(lower) && !/Business/i.test(href)) {
+    if (
+      !/business|profile|detail|entity|information|controln|id=|coa|taxpayer|ccfs|mbls|filing|account|entitysearch/i.test(
+        lower,
+      ) &&
+      !/Business/i.test(href)
+    ) {
       continue;
     }
     const url = absUrl(href, base);
@@ -61,6 +73,30 @@ function searchUrlFor(state: string, company: string): { url: string; base: stri
       base: 'https://www.sosnc.gov/',
     };
   }
+  if (state === 'TX') {
+    return {
+      url: `${TX_SEARCH}?name=${q}`,
+      base: 'https://mycpa.cpa.state.tx.us/',
+    };
+  }
+  if (state === 'MN') {
+    return {
+      url: `${MN_SEARCH}?searchType=BusinessName&searchValue=${q}`,
+      base: 'https://mblsportal.sos.state.mn.us/',
+    };
+  }
+  if (state === 'UT') {
+    return {
+      url: `${UT_SEARCH}?SearchTerm=${q}`,
+      base: 'https://businessregistration.utah.gov/',
+    };
+  }
+  if (state === 'WA') {
+    return {
+      url: `${WA_SEARCH}?searchTerm=${q}`,
+      base: 'https://ccfs.sos.wa.gov/',
+    };
+  }
   return {
     url: `${AZ_SEARCH}?q=${q}`,
     base: 'https://arizonabusinesscenter.azcc.gov/',
@@ -83,7 +119,7 @@ function blockedResult(
 
 export async function resolveHtmlOfficerState(
   input: NameLookupInput,
-  state: 'GA' | 'NC' | 'AZ',
+  state: HtmlOfficerState,
   ctx?: LookupContext,
 ): Promise<NameLookupResult> {
   if (state === 'AZ') return resolveArizona(input, ctx);
@@ -196,4 +232,8 @@ export const HTML_OFFICER_STATES = {
   GA_SEARCH,
   NC_SEARCH,
   AZ_SEARCH,
+  TX_SEARCH,
+  MN_SEARCH,
+  UT_SEARCH,
+  WA_SEARCH,
 };

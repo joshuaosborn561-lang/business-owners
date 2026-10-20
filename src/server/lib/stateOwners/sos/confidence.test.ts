@@ -28,12 +28,12 @@ describe('scoreOwnerConfidence', () => {
 
   it('attaches a 0–1 score on the hit', () => {
     const hit = attachConfidence({
-      first_name: 'Ada',
-      last_name: 'Lovelace',
+      first_name: 'JANE',
+      last_name: 'SAMPLE',
       title: 'President',
       company_name: 'Sample LLC',
       domain: null,
-      source_url: 'https://example.com',
+      source_url: 'https://example.test',
       confidence: 'medium',
       state: 'CA',
       source: 'website',
@@ -41,6 +41,6 @@ describe('scoreOwnerConfidence', () => {
       coverage_reason: null,
     });
     assert.ok((hit.confidence_score ?? 0) > 0.5);
-    assert.ok((hit.confidence_score ?? 0) <= 1);
+    assert.ok((hit.confidence_score ?? 0) <= 0.6);
   });
 });

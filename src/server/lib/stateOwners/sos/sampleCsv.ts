@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { normalizeState } from '../names.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
+import { domainFromWebsite } from './siteFetch.js';
 import { isWaterfallReady } from './waterfall.js';
 
 export interface SampleRow extends NameLookupInput {
@@ -57,7 +58,16 @@ export async function readCompanyCsv(path: string): Promise<SampleRow[]> {
     const city = get('city');
     const state = normalizeState(get('state', 'st'));
     if (!company || !state) continue;
-    rows.push({ company, company_name: company, city: city || null, state });
+    const website = get('website', 'url', 'website_url', 'site', 'homepage', 'web') || null;
+    const domain = get('domain') || domainFromWebsite(website) || null;
+    rows.push({
+      company,
+      company_name: company,
+      city: city || null,
+      state,
+      website,
+      domain,
+    });
   }
   return rows;
 }

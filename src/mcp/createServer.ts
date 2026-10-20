@@ -115,6 +115,7 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
               city: z.string().optional(),
               state: z.string().min(2),
               domain: z.string().optional(),
+              website: z.string().optional().describe('Company website URL or host. Used for DBA + About fallback.'),
             }),
           )
           .optional()

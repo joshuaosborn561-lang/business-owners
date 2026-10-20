@@ -73,10 +73,23 @@ export function isWaterfallReady(hit: WaterfallOwnerHit): boolean {
   if (!validateOfficerPersonName(`${hit.first_name} ${hit.last_name}`).ok) return false;
   if (hit.source === 'serper' && hit.confidence !== 'high') return false;
   if (hit.confidence === 'low') return false;
+  if (hit.source === 'website' && hit.corroborated !== true) return false;
   if (hit.source === 'ca_bizfile' && hit.match_method === 'trigram' && hit.city_match !== true) {
     return false;
   }
   return true;
+}
+
+export function samePerson(
+  a: { first_name?: string | null; last_name?: string | null },
+  b: { first_name?: string | null; last_name?: string | null },
+): boolean {
+  const firstA = String(a.first_name || '').replace(/\s+/g, ' ').trim().toUpperCase();
+  const lastA = String(a.last_name || '').replace(/\s+/g, ' ').trim().toUpperCase();
+  const firstB = String(b.first_name || '').replace(/\s+/g, ' ').trim().toUpperCase();
+  const lastB = String(b.last_name || '').replace(/\s+/g, ' ').trim().toUpperCase();
+  if (!firstA || !lastA || !firstB || !lastB) return false;
+  return firstA === firstB && lastA === lastB;
 }
 
 export function ownerConfidenceFromMatch(method: 'exact' | 'substring' | 'trigram' | 'license' | undefined): OwnerConfidence {

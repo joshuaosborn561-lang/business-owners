@@ -11,13 +11,14 @@ import {
 import { fetchCaStatementOfficers } from './caSi.js';
 import type { LookupContext } from './context.js';
 import { ensureIlDtaIndex, matchIlDta, IL_DTA_HOME } from './ilDta.js';
-import { resolveHtmlOfficerState } from './htmlStates.js';
+import { HTML_REGISTRY_STATES, resolveHtmlOfficerState, type HtmlOfficerState } from './htmlStates.js';
+import { domainFromWebsite } from './siteFetch.js';
 import { resolveColoradoAgentOnly, resolveOhioAgentOnly } from './agentStates.js';
 import { hitsFromRoster } from './officers.js';
 import { SERPER_USD_PER_QUERY } from './spend.js';
 import { resolveSerperOwner, serperIsHighConfidence } from './serperOwners.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
-import { agentOnlyHit, isWaterfallReady } from './waterfall.js';
+import { agentOnlyHit, isWaterfallReady, samePerson } from './waterfall.js';
 
 export function emptyNameResult(
   input: NameLookupInput,
@@ -212,8 +213,8 @@ async function resolveOfficialNameLookup(
 
   if (state === 'CA') return resolveCalifornia(input, ctx);
   if (state === 'IL') return resolveIllinois(input, ctx);
-  if (state === 'GA' || state === 'NC' || state === 'AZ') {
-    return resolveHtmlOfficerState(input, state, ctx);
+  if ((HTML_REGISTRY_STATES as readonly string[]).includes(state)) {
+    return resolveHtmlOfficerState(input, state as HtmlOfficerState, ctx);
   }
   if (state === 'OH') return resolveOhioAgentOnly(input, ctx);
   if (state === 'CO') return resolveColoradoAgentOnly(input, ctx);
@@ -268,6 +269,9 @@ export async function resolveNameLookup(
   if (!company || !state) {
     return emptyNameResult(input, 'not_found');
   }
+  if (!input.domain && input.website) {
+    input = { ...input, domain: domainFromWebsite(input.website) };
+  }
 
   const dba = await resolveDbaLegalName(input, ctx);
   const lookupInput: NameLookupInput =
@@ -287,8 +291,17 @@ export async function resolveNameLookup(
 
   if (needsAgentFallback(official) || needsAgentFallback(serper)) {
     const fallback = await resolveAgentFallback(lookupInput, ctx);
+    for (const person of fallback.people) {
+      if (person.source !== 'website') continue;
+      if (serper.people.some((p) => samePerson(p, person)) || official.people.some((p) => samePerson(p, person))) {
+        person.corroborated = true;
+      }
+    }
     if (fallback.people.some((p) => isWaterfallReady(p))) {
       return withDba(withSerperMeta(withOfficialSpend(fallback, official), serper), dba);
+    }
+    if (fallback.people.some((p) => p.source === 'website')) {
+      official.people = [...fallback.people, ...official.people];
     }
     if (fallback.serper_credits) {
       official.serper_credits = (official.serper_credits || 0) + fallback.serper_credits;

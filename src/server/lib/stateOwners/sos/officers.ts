@@ -1,10 +1,12 @@
 import {
   hasCompanyWord,
   htmlToText,
+  isDateToken,
   isPlaceName,
   isRegistryAgentName,
   parseBoardPersonName,
   splitPersonName,
+  stripDatesAndRegistryLabels,
   stripPersonHonorifics,
   validateOfficerPersonName,
 } from '../names.js';
@@ -72,6 +74,15 @@ const LABEL_TOKENS = new Set([
   'city',
   'state',
   'zip',
+  'filing',
+  'date',
+  'document',
+  'number',
+  'status',
+  'principal',
+  'mailing',
+  'authorized',
+  'person',
 ]);
 
 const REVIEW_TOKENS = new Set(
@@ -97,6 +108,20 @@ export function roleFromTitle(title: string): OwnerRole {
   return 'officer';
 }
 
+/** Lower is better. Owner/CEO/President beat CFO when picking the primary person. */
+export function officerPriority(title: string): number {
+  const t = String(title || '').toLowerCase();
+  if (/\b(owner|founder|sole\s+proprietor)\b/.test(t)) return 0;
+  if (/\b(ceo|chief\s+executive)\b/.test(t)) return 1;
+  if (/\bpresident\b/.test(t) && !/\bvice\b/.test(t)) return 2;
+  if (/\b(managing\s+member|manager)\b/.test(t)) return 3;
+  if (/\b(member|director|governor|partner|principal)\b/.test(t)) return 4;
+  if (/\b(vice\s+president|\bvp\b)/.test(t)) return 6;
+  if (/\bsecretary\b/.test(t)) return 7;
+  if (/\b(cfo|chief\s+financial|treasurer)\b/.test(t)) return 8;
+  return 5;
+}
+
 export function isOfficerTitle(title: string): boolean {
   return TITLE_RE.test(String(title || '').trim());
 }
@@ -114,6 +139,7 @@ function keepNameToken(token: string): 'keep' | 'strip' | 'reject' {
   if (!letters) return 'strip';
   const upper = letters.toUpperCase();
   const lower = letters.toLowerCase();
+  if (isDateToken(token) || isDateToken(letters)) return 'strip';
   if (REVIEW_TOKENS.has(lower)) return 'reject';
   if (US_STATE_CODES.has(upper) && upper.length === 2) return 'strip';
   if (TITLE_STRIP_TOKENS.has(lower)) return 'strip';
@@ -128,7 +154,7 @@ function keepNameToken(token: string): 'keep' | 'strip' | 'reject' {
  * Review-text names return null.
  */
 export function scrubCapitalizedPersonName(raw: string): string | null {
-  const cleaned = cleanName(stripPersonHonorifics(raw));
+  const cleaned = cleanName(stripPersonHonorifics(stripDatesAndRegistryLabels(raw)));
   if (!cleaned || cleaned.length > 80) return null;
   if (SKIP_NAME.test(cleaned)) return null;
   const comma = cleaned.includes(',');
@@ -293,7 +319,7 @@ export function hitsFromRoster(
   let confidence = ownerConfidenceFromMatch(matchMethod);
   if (matchMethod === 'trigram' && opts?.cityMatch) confidence = 'medium';
   const people = rosterToPeople(entries, source, sourceUrl, confidence, [input.city]);
-  return people.map((p) => {
+  const hits = people.map((p) => {
     const hit = waterfallHitFromPerson(input, p, null);
     hit.match_method = matchMethod;
     hit.city_match = Boolean(opts?.cityMatch);
@@ -311,4 +337,5 @@ export function hitsFromRoster(
       title_leadership: /owner|founder|president|ceo/i.test(hit.title || ''),
     });
   });
+  return hits.sort((a, b) => officerPriority(a.title || '') - officerPriority(b.title || ''));
 }
