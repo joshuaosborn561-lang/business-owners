@@ -7,7 +7,7 @@ import {
 import type { LookupContext } from './context.js';
 import { ctxSerper } from './context.js';
 import { copyrightLine, fetchSiteText, footerSlice, originFromInput } from './siteFetch.js';
-import { organicFromSerperPayload, serperPlaces, serperSearch } from './serper.js';
+import { organicFromSerperPayload, serperSearch } from './serper.js';
 import type { DbaSource, NameLookupInput, SerperOrganicHit } from './types.js';
 
 export interface DbaResolution {
@@ -174,20 +174,6 @@ export async function resolveDbaLegalName(
       dba_name: inputName,
       source: 'serper',
       source_url: fromSerper.url,
-      serper_credits: ctxSerper(ctx).credits - before,
-      notes,
-    };
-  }
-
-  const places = await serperPlaces(`${coreCompanySearchName(inputName)} ${input.city || ''} ${input.state || ''}`, ctx);
-  const placeTitle = places.places?.find((p) => looksLegal(p.title || '') && betterLegal('', p.title || '', inputName));
-  if (placeTitle?.title) {
-    return {
-      input_name: inputName,
-      legal_name: stripLegalTrailer(placeTitle.title),
-      dba_name: inputName,
-      source: 'maps',
-      source_url: placeTitle.website || placeTitle.link || null,
       serper_credits: ctxSerper(ctx).credits - before,
       notes,
     };

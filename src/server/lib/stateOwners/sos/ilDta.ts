@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -217,6 +217,46 @@ export function emptyIlIndex(): IlDtaIndex {
   return { byFile: new Map(), list: [] };
 }
 
+function isZipFile(path: string, name: string): boolean {
+  if (/\.zip$/i.test(name)) return true;
+  try {
+    const fd = readFileSync(path);
+    return fd.length >= 2 && fd[0] === 0x50 && fd[1] === 0x4b;
+  } catch {
+    return false;
+  }
+}
+
+function unzipSync(zipPath: string, dest: string): void {
+  mkdirSync(dest, { recursive: true });
+  try {
+    execFileSync('unzip', ['-o', '-q', zipPath, '-d', dest], { stdio: 'ignore' });
+  } catch {
+    execFileSync(
+      'python3',
+      [
+        '-c',
+        'import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])',
+        zipPath,
+        dest,
+      ],
+      { stdio: 'ignore' },
+    );
+  }
+}
+
+function ingestIlFile(index: IlDtaIndex, path: string, name: string): void {
+  if (name.startsWith('.')) return;
+  try {
+    if (!statSync(path).isFile()) return;
+    if (isZipFile(path, name)) return;
+    const text = readFileSync(path, 'utf8');
+    ingestIlDtaText(index, text, name);
+  } catch {
+    /* skip unreadable */
+  }
+}
+
 export function loadIlDtaDir(dir: string): IlDtaIndex {
   const index = emptyIlIndex();
   let entries: string[] = [];
@@ -225,16 +265,31 @@ export function loadIlDtaDir(dir: string): IlDtaIndex {
   } catch {
     return index;
   }
+  const extractDir = join(dir, '.extracted');
   for (const name of entries) {
     if (name.startsWith('.')) continue;
     const path = join(dir, name);
     try {
       if (!statSync(path).isFile()) continue;
-      const text = readFileSync(path, 'utf8');
-      ingestIlDtaText(index, text, name);
+      if (isZipFile(path, name)) {
+        try {
+          unzipSync(path, extractDir);
+        } catch {
+          continue;
+        }
+        continue;
+      }
+      ingestIlFile(index, path, name);
     } catch {
       continue;
     }
+  }
+  try {
+    for (const name of readdirSync(extractDir)) {
+      ingestIlFile(index, join(extractDir, name), name);
+    }
+  } catch {
+    /* no extracted files */
   }
   return index;
 }

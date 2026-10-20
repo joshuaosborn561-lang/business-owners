@@ -1,4 +1,12 @@
-import { DESKTOP_UA, isApifyWorthyBlock, isChallengePage, isTimeoutError, looksBlocked } from '../http.js';
+import {
+  DESKTOP_UA,
+  createResidentialProxyFetch,
+  isApifyWorthyBlock,
+  isChallengePage,
+  isTimeoutError,
+  looksBlocked,
+  type FetchLike,
+} from '../http.js';
 import {
   SOS_HTTP_TIMEOUT_MS,
   ctxFetch,
@@ -12,6 +20,45 @@ import { catalogByCode } from './catalog.js';
 import { APIFY_USD_PER_BLOCKED_LOOKUP, companySpendKey } from './spend.js';
 import type { NameLookupInput } from './types.js';
 
+/** Datacenter IPs get Cloudflare/Incapsula. Try residential proxy before Apify. TX/IL stay direct. */
+export const BOT_BLOCK_PROXY_STATES = new Set([
+  'AL',
+  'AZ',
+  'FL',
+  'GA',
+  'HI',
+  'KY',
+  'LA',
+  'MA',
+  'MN',
+  'MO',
+  'MS',
+  'NC',
+  'NE',
+  'NH',
+  'NV',
+  'PA',
+  'RI',
+  'UT',
+  'VA',
+  'VT',
+  'WA',
+  'WV',
+]);
+
+export function usesResidentialProxy(state: string): boolean {
+  return BOT_BLOCK_PROXY_STATES.has(String(state || '').toUpperCase());
+}
+
+async function ctxProxyFetch(ctx?: LookupContext): Promise<FetchLike | null> {
+  if (!ctx) return null;
+  if (ctx.proxyFetch) return ctx.proxyFetch;
+  const session = `sos${String(ctx.companyKey || 'x').replace(/[^0-9A-Za-z]/g, '').slice(0, 24) || 'x'}`;
+  const fn = await createResidentialProxyFetch(session);
+  if (fn) ctx.proxyFetch = fn;
+  return fn;
+}
+
 export interface OfficialPage {
   status: number;
   body: string;
@@ -21,6 +68,7 @@ export interface OfficialPage {
   usd: number;
   apify_worthy?: boolean;
   timed_out?: boolean;
+  via_proxy?: boolean;
 }
 
 function asOfficial(opts: {
@@ -129,8 +177,54 @@ export async function fetchOfficialPage(
     status = res.status;
     const buf = new Uint8Array(await res.arrayBuffer());
     body = Buffer.from(buf).toString('utf8');
-    const worthy = isApifyWorthyBlock(status, body);
-    const blocked = looksBlocked(status, body) || isChallengePage(body);
+    let worthy = isApifyWorthyBlock(status, body);
+    let blocked = looksBlocked(status, body) || isChallengePage(body);
+    if (worthy && usesResidentialProxy(opts.state)) {
+      const proxy = await ctxProxyFetch(ctx);
+      if (proxy) {
+        try {
+          const proxied = await proxy(
+            url,
+            withTimeoutSignal(
+              {
+                redirect: 'follow',
+                ...opts.init,
+                headers: {
+                  'User-Agent': DESKTOP_UA,
+                  Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+                  'Accept-Language': 'en-US,en;q=0.9',
+                  ...(opts.init?.headers || {}),
+                },
+              },
+              sosTimeoutMs(ctx),
+            ),
+          );
+          const pBuf = new Uint8Array(await proxied.arrayBuffer());
+          const pBody = Buffer.from(pBuf).toString('utf8');
+          const pWorthy = isApifyWorthyBlock(proxied.status, pBody);
+          const pBlocked = looksBlocked(proxied.status, pBody) || isChallengePage(pBody);
+          if (!pWorthy) {
+            ctx.companyKey = prevKey;
+            return {
+              status: proxied.status,
+              body: pBlocked ? '' : pBody,
+              url: proxied.url || url,
+              via_apify: false,
+              via_proxy: true,
+              blocked: pBlocked,
+              usd: 0,
+              apify_worthy: false,
+            };
+          }
+          status = proxied.status;
+          body = pBody;
+          worthy = pWorthy;
+          blocked = pBlocked;
+        } catch {
+          /* fall through to Apify when allowed */
+        }
+      }
+    }
     if (!worthy) {
       ctx.companyKey = prevKey;
       return {

@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "name": "SAMPLE BUILDERS LLC",
+      "taxpayerId": "32000000001",
+      "mailingAddressCity": "AUSTIN",
+      "mailingAddressZip": "78701"
+    }
+  ]
+}

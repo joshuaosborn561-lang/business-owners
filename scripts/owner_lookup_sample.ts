@@ -36,6 +36,7 @@ import {
   apifyUsdPerCompanyFromEnv,
   estimateCaBatchUsd,
   estimateCaHybridUsd,
+  totalMaxUsdFromEnv,
 } from '../src/server/lib/stateOwners/sos/spend.ts';
 import { normalizeState } from '../src/server/lib/stateOwners/names.ts';
 import type { NameLookupResult } from '../src/server/lib/stateOwners/sos/types.ts';
@@ -127,7 +128,7 @@ async function main(): Promise<void> {
   const spendFile = arg('--spend-file') || process.env.APIFY_SPEND_FILE || `${writePath}.apify-spend.json`;
   const spend = new ApifySpendTracker({
     persistPath: spendFile,
-    capUsd: apifyMaxUsdFromEnv(),
+    capUsd: totalMaxUsdFromEnv() ?? apifyMaxUsdFromEnv(),
     companyCapUsd: apifyUsdPerCompanyFromEnv(),
   });
   const serper = new SerperCreditTracker();
@@ -165,7 +166,7 @@ async function main(): Promise<void> {
   };
 
   const lookupOne = async (row: SampleRow) => {
-    if (deadlineAt && Date.now() >= deadlineAt) {
+    if ((deadlineAt && Date.now() >= deadlineAt) || spend.exhausted()) {
       await writeDone(row, skippedResult(row, 'blocked'));
       return;
     }
@@ -197,7 +198,7 @@ async function main(): Promise<void> {
     }
   } else if (!caBatch) {
     await mapPool(pending, concurrency, lookupOne, {
-      shouldStop: () => Boolean(deadlineAt && Date.now() >= deadlineAt),
+      shouldStop: () => Boolean(deadlineAt && Date.now() >= deadlineAt) || spend.exhausted(),
     });
     if (deadlineAt && Date.now() >= deadlineAt) {
       for (const row of pending) {
@@ -208,7 +209,7 @@ async function main(): Promise<void> {
   }
   if (caBatch && otherRows.length) {
     await mapPool(otherRows, concurrency, lookupOne, {
-      shouldStop: () => Boolean(deadlineAt && Date.now() >= deadlineAt),
+      shouldStop: () => Boolean(deadlineAt && Date.now() >= deadlineAt) || spend.exhausted(),
     });
     if (deadlineAt && Date.now() >= deadlineAt) {
       for (const row of otherRows) {
@@ -219,7 +220,7 @@ async function main(): Promise<void> {
   }
 
   const summary = summarizeSample(lines);
-  summary.apify_usd_spent = Number((spend.usd || summary.apify_usd_spent).toFixed(2));
+  summary.apify_usd_spent = Number((spend.apifyUsd || summary.apify_usd_spent).toFixed(2));
   summary.serper_credits = serper.credits || summary.serper_credits;
   summary.serper_usd = Number((serper.usd || summary.serper_usd).toFixed(4));
   const summaryPath = resolve(arg('--summary') || `${writePath}.summary.json`);

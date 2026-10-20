@@ -107,6 +107,46 @@ const MID_TOKEN = `(?:${CAP_TOKEN}|[A-Z]\\.)`;
 export const CAP_NAME_CAPTURE =
   `(${CAP_TOKEN}[ \\t]*,[ \\t]*${MID_TOKEN}(?:[ \\t]+${CAP_TOKEN})?|${CAP_TOKEN}[ \\t]+${MID_TOKEN}(?:[ \\t]+${CAP_TOKEN})?)`;
 
+const TITLE_CANON: Record<string, string> = {
+  president: 'President',
+  pres: 'President',
+  vp: 'Vice President',
+  ceo: 'CEO',
+  cfo: 'CFO',
+  coo: 'COO',
+  secretary: 'Secretary',
+  treasurer: 'Treasurer',
+  director: 'Director',
+  directors: 'Director',
+  manager: 'Manager',
+  managers: 'Manager',
+  member: 'Member',
+  principal: 'Principal',
+  owner: 'Owner',
+  founder: 'Founder',
+  officer: 'Officer',
+};
+
+/** Display form for SOS abbreviations and ALL-CAPS titles (PRESIDENT → President). */
+export function canonicalOfficerTitle(raw: string): string {
+  const t = String(raw || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!t) return 'Officer';
+  const key = t
+    .toLowerCase()
+    .replace(/[./_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (TITLE_CANON[key]) return TITLE_CANON[key];
+  if (/^[A-Z][A-Z\s&.-]+$/.test(t) && t.length > 3 && !/^(CEO|CFO|COO|CTO|VP)$/.test(t)) {
+    return t
+      .toLowerCase()
+      .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+  }
+  return t;
+}
+
 export function roleFromTitle(title: string): OwnerRole {
   for (const row of TITLE_ROLE) {
     if (row.re.test(title)) return row.role;
@@ -213,7 +253,7 @@ function pushEntry(
   const key = cleaned.toLowerCase();
   if (seen.has(key)) return;
   seen.add(key);
-  out.push({ name: cleaned, title: cleanName(title) || 'Officer', role, labeled });
+  out.push({ name: cleaned, title: canonicalOfficerTitle(cleanName(title)) || 'Officer', role, labeled });
 }
 
 /** SI-550 / LLC-12 / annual-report / HTML-table officer names. */
@@ -330,16 +370,24 @@ export function hitsFromRoster(
   let confidence = ownerConfidenceFromMatch(matchMethod);
   if (matchMethod === 'trigram' && opts?.cityMatch) confidence = 'medium';
   const people = rosterToPeople(entries, source, sourceUrl, confidence, [input.city]);
+  const titleFor = (p: OwnerPerson): string | undefined => {
+    const full = (p.full_name_raw || '').toLowerCase();
+    const flipped = `${p.first_name || ''} ${p.last_name || ''}`.trim().toLowerCase();
+    const comma = `${p.last_name || ''}, ${p.first_name || ''}`.trim().toLowerCase();
+    const row = entries.find((e) => {
+      const n = e.name.toLowerCase();
+      return n === full || n === flipped || n === comma;
+    });
+    return row?.title;
+  };
   const hits = people.map((p) => {
     const hit = waterfallHitFromPerson(input, p, null);
     hit.match_method = matchMethod;
     hit.city_match = Boolean(opts?.cityMatch);
-    if (p.role === 'member') hit.title = /managing/i.test(entries.find((e) => e.name === p.full_name_raw)?.title || '')
-      ? 'Managing Member'
-      : 'Member';
-    else if (entries.find((e) => e.name === p.full_name_raw)?.title) {
-      hit.title = entries.find((e) => e.name === p.full_name_raw)!.title;
-    }
+    const rosterTitle = titleFor(p);
+    if (p.role === 'member') hit.title = /managing/i.test(rosterTitle || '') ? 'Managing Member' : 'Member';
+    else if (rosterTitle) hit.title = canonicalOfficerTitle(rosterTitle);
+
     const labeled = Boolean(entries.find((e) => e.name === p.full_name_raw)?.labeled);
     return attachConfidence(hit, {
       match_method: matchMethod,

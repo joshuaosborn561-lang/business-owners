@@ -22,6 +22,7 @@ import {
   CAP_NAME_CAPTURE,
   TITLE_BOUNDED,
   isOfficerTitle,
+  officerPriority,
   parseOfficerRoster,
   roleFromTitle,
   scrubCapitalizedPersonName,
@@ -345,11 +346,27 @@ function rankCandidate(c: SerperCandidate): number {
 
 function betterCandidate(a: SerperCandidate | null, b: SerperCandidate): boolean {
   if (!a) return true;
+  const priA = officerPriority(a.entry.title);
+  const priB = officerPriority(b.entry.title);
+  const aHigh = a.score >= SERPER_HIGH_SCORE;
+  const bHigh = b.score >= SERPER_HIGH_SCORE;
+  if (aHigh !== bHigh) return bHigh;
+  if (priA !== priB && Math.abs(a.score - b.score) <= 0.15) return priB < priA;
   const rb = rankCandidate(b);
   const ra = rankCandidate(a);
   if (rb !== ra) return rb > ra;
+  if (priA !== priB) return priB < priA;
   if (b.entry.labeled && !a.entry.labeled) return true;
   if (b.trusted && !a.trusted) return true;
+  return false;
+}
+
+export function organicHasLinkedInOrSos(hits: SerperOrganicHit[], state: string): boolean {
+  for (const hit of hits) {
+    const url = String(hit.link || '');
+    if (/linkedin\.com\/in\//i.test(url)) return true;
+    if (isTrustedSerperHost(url, state)) return true;
+  }
   return false;
 }
 
@@ -429,29 +446,51 @@ export async function resolveSerperOwner(
   if (!company || !state) return serperEmpty(input, 0);
   if (ctx?.serperEnabled === false) return serperEmpty(input, 0);
 
-  const queries = serperQueriesFor(input);
   const before = ctxSerper(ctx).credits;
-  const payloads = await Promise.all(queries.map((q) => serperSearch(q, ctx)));
-  const credits = ctxSerper(ctx).credits - before;
-
+  const officerQuery = serperOfficerQuery(input);
   const organic: SerperOrganicHit[] = [];
-  for (const payload of payloads) {
-    organic.push(...organicFromSerperPayload(payload));
-  }
-  const kg = payloads[0]?.knowledgeGraph?.description;
+  let best: SerperCandidate | null = null;
+  let skipSites = false;
+
+  const ingest = (payload: Awaited<ReturnType<typeof serperSearch>>) => {
+    const rows = organicFromSerperPayload(payload);
+    organic.push(...rows);
+    if (organicHasLinkedInOrSos(rows, state)) skipSites = true;
+    for (const row of rows) {
+      for (const cand of candidatesFromOrganic(input, row)) {
+        if (betterCandidate(best, cand)) best = cand;
+      }
+    }
+  };
+
+  const first = await serperSearch(officerQuery, ctx);
+  ingest(first);
+  const kg = first.knowledgeGraph?.description;
   if (kg && organic[0]) {
     organic[0] = {
       ...organic[0],
       snippet: `${organic[0].snippet || ''} ${kg}`.trim(),
     };
-  }
-
-  let best: SerperCandidate | null = null;
-  for (const row of organic) {
-    for (const cand of candidatesFromOrganic(input, row)) {
-      if (betterCandidate(best, cand)) best = cand;
+    best = null;
+    for (const row of organic) {
+      for (const cand of candidatesFromOrganic(input, row)) {
+        if (betterCandidate(best, cand)) best = cand;
+      }
     }
   }
+
+  if (!best || best.score < SERPER_HIGH_SCORE) {
+    if (!skipSites) {
+      for (const q of serperSiteQueries(input)) {
+        if (best && best.score >= SERPER_HIGH_SCORE) break;
+        if (skipSites) break;
+        const payload = await serperSearch(q, ctx);
+        ingest(payload);
+      }
+    }
+  }
+
+  const credits = ctxSerper(ctx).credits - before;
 
   if (!best) return serperEmpty(input, credits);
 

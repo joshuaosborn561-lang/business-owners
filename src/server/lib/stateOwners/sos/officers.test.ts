@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { officerPriority, parseOfficerRoster, rosterToPeople, hitsFromRoster } from './officers.js';
+import { canonicalOfficerTitle, officerPriority, parseOfficerRoster, rosterToPeople, hitsFromRoster } from './officers.js';
 import { isWaterfallReady } from './waterfall.js';
 
 describe('parseOfficerRoster', () => {
@@ -91,6 +91,13 @@ PAT MORGAN`;
     assert.equal(isWaterfallReady(withCity[0]!), true);
     const partial = hitsFromRoster(input, [{ name: 'JANE', title: 'CEO', role: 'officer' }], 'ca_bizfile', 'https://example.test/1', 'exact');
     assert.equal(partial.some((p) => isWaterfallReady(p)), false);
+  });
+
+  it('canonicalizes ALL-CAPS SOS titles without turning CFO into Cfo', () => {
+    assert.equal(canonicalOfficerTitle('PRESIDENT'), 'President');
+    assert.equal(canonicalOfficerTitle('VP'), 'Vice President');
+    assert.equal(canonicalOfficerTitle('CFO'), 'CFO');
+    assert.equal(canonicalOfficerTitle('Chief Executive Officer'), 'Chief Executive Officer');
   });
 
   it('prefers owner/CEO/President over VP/CFO when picking the primary person', () => {

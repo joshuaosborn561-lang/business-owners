@@ -15,14 +15,26 @@ export const CA_BATCH_COMPANIES_PER_RUN = 400;
 export const CA_BATCH_ITEM_RETRIES = 3;
 /** google.serper.dev search. One credit per query; Josh prefers this over Apify. */
 export const SERPER_USD_PER_QUERY = 0.001;
-/** Generic officer query + separate OpenCorporates, Bizapedia, Sunbiz, and state SOS queries. */
-export const SERPER_QUERIES_PER_ROW = 5;
+/** Hard cap on Serper queries for one company (DBA + owner + LinkedIn fallback). */
+export const SERPER_QUERIES_PER_COMPANY = 8;
+/** Estimate: officer query + a few site/DBA lookups, never more than the per-company cap. */
+export const SERPER_QUERIES_PER_ROW = SERPER_QUERIES_PER_COMPANY;
 
 export function apifyMaxUsdFromEnv(): number | null {
   const raw = process.env.APIFY_MAX_USD?.trim();
   if (!raw) return null;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Unified Apify + Serper cap. Falls back to APIFY_MAX_USD when TOTAL_MAX_USD is unset. */
+export function totalMaxUsdFromEnv(): number | null {
+  const raw = process.env.TOTAL_MAX_USD?.trim();
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return apifyMaxUsdFromEnv();
 }
 
 export function apifyUsdPerCompanyFromEnv(): number {
@@ -53,12 +65,16 @@ export function companySpendKey(input: {
 
 interface PersistShape {
   usd: number;
+  apifyUsd: number;
   runs: number;
   lookups: number;
   computeUnits: number;
   proxyGb: number;
   refused: number;
+  serperCredits: number;
+  serperQueries: number;
   companies: Record<string, number>;
+  serperCompanies: Record<string, number>;
 }
 
 function sleepSync(ms: number): void {
@@ -100,20 +116,37 @@ function withFileLock<T>(lockPath: string, fn: () => T): T {
 }
 
 function emptyPersist(): PersistShape {
-  return { usd: 0, runs: 0, lookups: 0, computeUnits: 0, proxyGb: 0, refused: 0, companies: {} };
+  return {
+    usd: 0,
+    apifyUsd: 0,
+    runs: 0,
+    lookups: 0,
+    computeUnits: 0,
+    proxyGb: 0,
+    refused: 0,
+    serperCredits: 0,
+    serperQueries: 0,
+    companies: {},
+    serperCompanies: {},
+  };
 }
 
 export class ApifySpendTracker {
+  /** Unified billed USD (Apify + Serper). This is what TOTAL_MAX_USD caps. */
   usd = 0;
+  apifyUsd = 0;
+  serperCredits = 0;
+  serperQueries = 0;
   runs = 0;
   lookups = 0;
   computeUnits = 0;
   refused = 0;
   proxyGb = 0;
-  capUsd: number | null = apifyMaxUsdFromEnv();
+  capUsd: number | null = totalMaxUsdFromEnv();
   companyCapUsd: number = apifyUsdPerCompanyFromEnv();
   persistPath: string | null = null;
   companies = new Map<string, number>();
+  serperCompanies = new Map<string, number>();
 
   constructor(opts?: { capUsd?: number | null; persistPath?: string | null; companyCapUsd?: number }) {
     if (opts?.capUsd !== undefined) this.capUsd = opts.capUsd;
@@ -135,6 +168,9 @@ export class ApifySpendTracker {
     try {
       const raw = JSON.parse(readFileSync(this.persistPath, 'utf8')) as PersistShape;
       this.usd = Number(raw.usd) || 0;
+      this.apifyUsd = Number(raw.apifyUsd) || (raw.serperCredits ? 0 : this.usd);
+      this.serperCredits = Number(raw.serperCredits) || 0;
+      this.serperQueries = Number(raw.serperQueries) || this.serperCredits;
       this.runs = Number(raw.runs) || 0;
       this.lookups = Number(raw.lookups) || 0;
       this.computeUnits = Number(raw.computeUnits) || 0;
@@ -143,6 +179,13 @@ export class ApifySpendTracker {
       this.companies = new Map(
         Object.entries(raw.companies || {}).map(([k, v]) => [k, Number(v) || 0]),
       );
+      this.serperCompanies = new Map(
+        Object.entries(raw.serperCompanies || {}).map(([k, v]) => [k, Number(v) || 0]),
+      );
+      if (!raw.apifyUsd && this.serperCredits > 0) {
+        this.apifyUsd = Number((this.usd - this.serperCredits * SERPER_USD_PER_QUERY).toFixed(4));
+        if (this.apifyUsd < 0) this.apifyUsd = 0;
+      }
     } catch {
       /* keep in-memory */
     }
@@ -152,12 +195,16 @@ export class ApifySpendTracker {
     if (!this.persistPath) return;
     const payload: PersistShape = {
       usd: this.usd,
+      apifyUsd: this.apifyUsd,
       runs: this.runs,
       lookups: this.lookups,
       computeUnits: this.computeUnits,
       proxyGb: this.proxyGb,
       refused: this.refused,
+      serperCredits: this.serperCredits,
+      serperQueries: this.serperQueries,
       companies: Object.fromEntries(this.companies),
+      serperCompanies: Object.fromEntries(this.serperCompanies),
     };
     const tmp = `${this.persistPath}.${process.pid}.tmp`;
     mkdirSync(dirname(this.persistPath), { recursive: true });
@@ -172,6 +219,26 @@ export class ApifySpendTracker {
 
   remainingCompanyUsd(key: string): number {
     return Math.max(0, Number((this.companyCapUsd - this.companySpent(key)).toFixed(4)));
+  }
+
+  remainingSerperQueries(key?: string | null): number {
+    if (this.persistPath) this.locked(() => this.hydrate());
+    if (!key) return SERPER_QUERIES_PER_COMPANY;
+    return Math.max(0, SERPER_QUERIES_PER_COMPANY - (this.serperCompanies.get(key) || 0));
+  }
+
+  remainingTotalUsd(): number {
+    if (this.persistPath) this.locked(() => this.hydrate());
+    if (this.capUsd == null) return Number.POSITIVE_INFINITY;
+    return Math.max(0, Number((this.capUsd - this.usd).toFixed(4)));
+  }
+
+  exhausted(): boolean {
+    return this.locked(() => {
+      this.hydrate();
+      if (this.capUsd == null) return false;
+      return this.usd >= this.capUsd;
+    });
   }
 
   wouldExceed(additional = APIFY_USD_PER_BLOCKED_LOOKUP): boolean {
@@ -205,8 +272,35 @@ export class ApifySpendTracker {
       // Any remaining per-company budget may start another blocked fetch (search then detail).
       if (companyKey && (this.companies.get(companyKey) || 0) >= this.companyCapUsd) return false;
       this.usd = Number((this.usd + extra).toFixed(4));
+      this.apifyUsd = Number((this.apifyUsd + extra).toFixed(4));
       if (companyKey) {
         this.companies.set(companyKey, Number(((this.companies.get(companyKey) || 0) + extra).toFixed(4)));
+      }
+      this.flush();
+      return true;
+    });
+  }
+
+  /**
+   * Charge one or more Serper credits against the same TOTAL_MAX_USD ledger.
+   * Returns false (and does not call the vendor) when the total cap or the
+   * per-company query cap would be exceeded.
+   */
+  reserveSerper(credits = 1, companyKey?: string | null): boolean {
+    const n = Math.max(0, Math.floor(Number(credits) || 0));
+    if (n <= 0) return true;
+    const extra = Number((n * SERPER_USD_PER_QUERY).toFixed(4));
+    return this.locked(() => {
+      this.hydrate();
+      if (this.capUsd != null && this.usd + extra > this.capUsd) return false;
+      if (companyKey && (this.serperCompanies.get(companyKey) || 0) + n > SERPER_QUERIES_PER_COMPANY) {
+        return false;
+      }
+      this.usd = Number((this.usd + extra).toFixed(4));
+      this.serperCredits += n;
+      this.serperQueries += n;
+      if (companyKey) {
+        this.serperCompanies.set(companyKey, (this.serperCompanies.get(companyKey) || 0) + n);
       }
       this.flush();
       return true;
@@ -225,7 +319,9 @@ export class ApifySpendTracker {
     this.locked(() => {
       this.hydrate();
       this.usd = Number((this.usd + delta).toFixed(4));
+      this.apifyUsd = Number((this.apifyUsd + delta).toFixed(4));
       if (this.usd < 0) this.usd = 0;
+      if (this.apifyUsd < 0) this.apifyUsd = 0;
       this.runs += 1;
       this.lookups += opts?.lookups ?? 1;
       if (opts?.cu) this.computeUnits += opts.cu;
@@ -245,7 +341,9 @@ export class ApifySpendTracker {
     this.locked(() => {
       this.hydrate();
       this.usd = Number((this.usd - reserved).toFixed(4));
+      this.apifyUsd = Number((this.apifyUsd - reserved).toFixed(4));
       if (this.usd < 0) this.usd = 0;
+      if (this.apifyUsd < 0) this.apifyUsd = 0;
       if (companyKey) {
         const next = Number(((this.companies.get(companyKey) || 0) - reserved).toFixed(4));
         this.companies.set(companyKey, Math.max(0, next));
@@ -269,6 +367,7 @@ export class ApifySpendTracker {
     this.locked(() => {
       this.hydrate();
       this.usd = Number((this.usd + extra).toFixed(4));
+      this.apifyUsd = Number((this.apifyUsd + extra).toFixed(4));
       this.runs += 1;
       this.lookups += opts?.lookups ?? 1;
       if (opts?.cu) this.computeUnits += opts.cu;
@@ -285,18 +384,26 @@ export class ApifySpendTracker {
 
   snapshot(): {
     apify_usd_spent: number;
+    total_usd_spent: number;
     apify_runs: number;
     apify_lookups: number;
     apify_compute_units: number;
     apify_proxy_gb: number;
+    serper_credits: number;
+    serper_queries: number;
+    serper_usd: number;
   } {
     if (this.persistPath) this.locked(() => this.hydrate());
     return {
-      apify_usd_spent: Number(this.usd.toFixed(2)),
+      apify_usd_spent: Number(this.apifyUsd.toFixed(2)),
+      total_usd_spent: Number(this.usd.toFixed(4)),
       apify_runs: this.runs,
       apify_lookups: this.lookups,
       apify_compute_units: Number(this.computeUnits.toFixed(4)),
       apify_proxy_gb: Number(this.proxyGb.toFixed(4)),
+      serper_credits: this.serperCredits,
+      serper_queries: this.serperQueries,
+      serper_usd: Number((this.serperCredits * SERPER_USD_PER_QUERY).toFixed(4)),
     };
   }
 }
@@ -352,43 +459,99 @@ export function proxyGbFromApifyRun(
   return 0;
 }
 
-function reportedUsageTotalUsd(run: {
+export interface ApifyRunPricingEvent {
+  eventKey?: string;
+  eventName?: string;
+  eventTitle?: string;
+  eventPriceUsd?: number;
+  priceUsd?: number;
+}
+
+export interface ApifyRunBillShape {
   usageTotalUsd?: number;
   usageUsd?: number;
+  usage?: Record<string, number>;
+  stats?: { computeUnits?: number; netRxBytes?: number; netTxBytes?: number };
+  status?: string;
+  id?: string;
   economics?: { totalUsd?: number };
-} | null | undefined): number {
-  const n = Number(run?.usageTotalUsd ?? run?.usageUsd ?? run?.economics?.totalUsd ?? 0);
+  chargedEventCounts?: Record<string, number>;
+  pricingInfo?: {
+    pricingModel?: string;
+    pricingPerEvent?: {
+      actorChargeEvents?: Record<string, { eventPriceUsd?: number; eventTitle?: string }>;
+      actorChargeItems?: ApifyRunPricingEvent[];
+    };
+  };
+}
+
+function reportedUsageTotalUsd(run: ApifyRunBillShape | null | undefined): number {
+  const n = Number(run?.usageTotalUsd ?? run?.usageUsd ?? 0);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+function eventPriceMap(run: ApifyRunBillShape | null | undefined): Map<string, number> {
+  const prices = new Map<string, number>();
+  const events = run?.pricingInfo?.pricingPerEvent?.actorChargeEvents || {};
+  for (const [key, row] of Object.entries(events)) {
+    const p = Number(row?.eventPriceUsd);
+    if (key && Number.isFinite(p) && p > 0) prices.set(key, p);
+  }
+  for (const item of run?.pricingInfo?.pricingPerEvent?.actorChargeItems || []) {
+    const key = String(item.eventKey || item.eventName || item.eventTitle || '').trim();
+    const p = Number(item.eventPriceUsd ?? item.priceUsd);
+    if (key && Number.isFinite(p) && p > 0) prices.set(key, p);
+  }
+  return prices;
+}
+
+/** Pay-per-event USD: chargedEventCounts × prices from the finished run's pricingInfo. */
+export function eventUsdFromApifyRun(run: ApifyRunBillShape | null | undefined): number {
+  const counts = run?.chargedEventCounts || {};
+  const prices = eventPriceMap(run);
+  let sum = 0;
+  for (const [key, raw] of Object.entries(counts)) {
+    const n = Number(raw) || 0;
+    if (n <= 0) continue;
+    const price = prices.get(key);
+    if (price == null || !(price > 0)) continue;
+    sum += n * price;
+  }
+  return Number(sum.toFixed(6));
+}
+
+export function runHasBillData(run: ApifyRunBillShape | null | undefined): boolean {
+  // chargedEventCounts alone is not a complete bill — usageTotalUsd often lands
+  // only after a follow-up GET of the finished run.
+  if (reportedUsageTotalUsd(run) > 0) return true;
+  if (Number(run?.economics?.totalUsd) > 0) return true;
+  return false;
+}
+
 export function usdFromApifyRun(
-  run: {
-    usageTotalUsd?: number;
-    usageUsd?: number;
-    usage?: Record<string, number>;
-    stats?: { computeUnits?: number; netRxBytes?: number; netTxBytes?: number };
-    status?: string;
-    id?: string;
-    economics?: { totalUsd?: number };
-  } | null | undefined,
+  run: ApifyRunBillShape | null | undefined,
   opts?: { succeeded?: boolean; started?: boolean },
 ): {
   usd: number;
   cu: number;
   proxyGb: number;
+  eventUsd: number;
 } {
   const cu = Number(run?.stats?.computeUnits || run?.usage?.ACTOR_COMPUTE_UNITS || 0);
   const proxyGb = proxyGbFromApifyRun(run);
   const succeeded = opts?.succeeded ?? run?.status === 'SUCCEEDED';
   const started = opts?.started ?? Boolean(run?.id);
-  const reported = reportedUsageTotalUsd(run);
-  // Always prefer the actor run's billed usageTotalUsd — including failed runs.
-  if (reported > 0) return { usd: reported, cu, proxyGb };
-  if (cu > 0) return { usd: cu * APIFY_USD_PER_COMPUTE_UNIT, cu, proxyGb };
-  // A started run is billed even when Apify has not yet filled usageTotalUsd.
-  if (started) return { usd: APIFY_USD_PER_BLOCKED_LOOKUP, cu, proxyGb };
-  if (!succeeded) return { usd: 0, cu: 0, proxyGb };
-  return { usd: APIFY_USD_PER_BLOCKED_LOOKUP, cu: 0, proxyGb };
+  const usage = reportedUsageTotalUsd(run);
+  const eventUsd = eventUsdFromApifyRun(run);
+  const economics = Number(run?.economics?.totalUsd);
+  // Platform total when Apify reports it; otherwise usageTotalUsd plus PPE events.
+  let usd = 0;
+  if (Number.isFinite(economics) && economics > 0) usd = economics;
+  else if (usage > 0 || eventUsd > 0) usd = Number((usage + eventUsd).toFixed(6));
+  else if (cu > 0) usd = cu * APIFY_USD_PER_COMPUTE_UNIT;
+  else if (started) usd = APIFY_USD_PER_BLOCKED_LOOKUP;
+  else if (succeeded) usd = APIFY_USD_PER_BLOCKED_LOOKUP;
+  return { usd, cu, proxyGb, eventUsd };
 }
 
 export function estimateCaBatchUsd(companyCount: number): number {

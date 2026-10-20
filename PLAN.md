@@ -120,5 +120,7 @@ Serper hits are waterfall-ready only at **high**. CA trigram is not ready unless
 - Blocked/challenge HTML is never a match.
 - Registered agent ≠ owner.
 - MCP replies: counts, job ids, nameless samples. No officer names in chat.
-- `APIFY_MAX_USD` hard cap; refused runs $0.
+- `TOTAL_MAX_USD` hard cap (Apify + Serper). Falls back to `APIFY_MAX_USD`. Refused runs $0.
+- Apify billed from the finished run: `usageTotalUsd` + `chargedEventCounts` × event prices.
+- Serper ≤8 queries/company, $0.001 each, stop at 0.8.
 - Writes stay off until a later persist PR.

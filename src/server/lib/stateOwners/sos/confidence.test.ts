@@ -39,9 +39,9 @@ describe('scoreOwnerConfidence', () => {
       source: 'website',
       role: 'owner',
       coverage_reason: null,
-    });
+    }, { title_leadership: true });
     assert.ok((hit.confidence_score ?? 0) > 0.5);
-    assert.ok((hit.confidence_score ?? 0) <= 0.6);
+    assert.ok((hit.confidence_score ?? 0) >= 0.8);
   });
 
   it('raises corroborated website hits to 0.8+ and LinkedIn slug agreement to 0.8', () => {

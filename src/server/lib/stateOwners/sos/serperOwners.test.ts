@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import type { LookupContext } from './context.js';
 import { resolveNameLookup } from './namePath.js';
-import { parseOfficerRoster } from './officers.js';
+import { officerPriority, parseOfficerRoster } from './officers.js';
 import {
   blobHasState,
   companyTiedToBlob,
@@ -42,6 +42,21 @@ describe('serper owner tier', () => {
     assert.ok(sites.some((s) => s.startsWith('site:sunbiz.org')));
     assert.ok(sites.some((s) => s.startsWith('site:bizfileonline.sos.ca.gov')));
     assert.equal(serperQueriesFor(input).length, 1 + sites.length);
+  });
+
+  it('ranks Owner/President/CEO over VP/CFO on Serper hits', () => {
+    const cfo = scoreSerperOrganic(input, {
+      title: 'ACME BUILDERS LLC — River Sample, CFO | OpenCorporates',
+      link: 'https://opencorporates.com/companies/us_ca/1',
+      snippet: 'CFO River Sample of ACME BUILDERS LLC in Oakland, California.',
+    });
+    const president = scoreSerperOrganic(input, {
+      title: 'ACME BUILDERS LLC — Jane Sample, President | OpenCorporates',
+      link: 'https://opencorporates.com/companies/us_ca/1',
+      snippet: 'President Jane Sample of ACME BUILDERS LLC in Oakland, California.',
+    });
+    assert.ok(cfo && president);
+    assert.ok(officerPriority(president!.entry.title) < officerPriority(cfo!.entry.title));
   });
 
   it('accepts a high-confidence OpenCorporates snippet tied to company + city + state', () => {
@@ -226,12 +241,61 @@ describe('serper owner tier', () => {
       },
     };
     const result = await resolveSerperOwner(input, ctx);
-    assert.equal(result.serper_credits, serperQueriesFor(input).length);
+    assert.ok((result.serper_credits || 0) >= 1);
+    assert.ok((result.serper_credits || 0) <= serperQueriesFor(input).length);
+    assert.ok((result.serper_credits || 0) <= 8);
     assert.ok(result.people.some((p) => isWaterfallReady(p)));
     assert.match(result.people[0]?.first_name || '', /Jane/i);
     const lookup = await resolveNameLookup(input, ctx);
     assert.equal(lookup.source, 'serper');
     assert.equal(lookup.people[0]?.confidence, 'high');
+  });
+
+  it('stops after the first high-confidence hit and skips leftover site queries', async () => {
+    const oc = json('serper-organic.json');
+    let queries = 0;
+    const serper = new SerperCreditTracker();
+    const result = await resolveSerperOwner(input, {
+      live: true,
+      serper,
+      serperEnabled: true,
+      serperOrganic: (q) => {
+        queries += 1;
+        if (q.startsWith('site:')) throw new Error(`site query should not run after 0.8 hit: ${q}`);
+        return oc;
+      },
+    });
+    assert.equal(queries, 1);
+    assert.equal(result.serper_credits, 1);
+    assert.ok(result.people.some((p) => isWaterfallReady(p)));
+  });
+
+  it('skips site-specific searches once a SOS host already matched', async () => {
+    let queries: string[] = [];
+    const serper = new SerperCreditTracker();
+    await resolveSerperOwner(
+      { company_name: 'ACME BUILDERS LLC', city: 'Miami', state: 'FL' },
+      {
+        live: true,
+        serper,
+        serperEnabled: true,
+        serperOrganic: (q) => {
+          queries.push(q);
+          if (q.startsWith('site:')) throw new Error(`site query skipped after SOS: ${q}`);
+          return {
+            organic: [
+              {
+                title: 'ACME BUILDERS LLC — Officer Jane Sample',
+                link: 'https://search.sunbiz.org/Inquiry/CorporationSearch/SearchResultDetail?x=1',
+                snippet: 'President Jane Sample of ACME BUILDERS LLC in Miami, Florida.',
+              },
+            ],
+          };
+        },
+      },
+    );
+    assert.equal(queries.some((q) => q.startsWith('site:')), false);
+    assert.equal(queries.length, 1);
   });
 
   it('covers unimplemented states via Serper without inventing SOS matches', async () => {

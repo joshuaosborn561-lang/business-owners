@@ -73,7 +73,9 @@ export function isWaterfallReady(hit: WaterfallOwnerHit): boolean {
   if (!validateOfficerPersonName(`${hit.first_name} ${hit.last_name}`).ok) return false;
   if (hit.source === 'serper' && hit.confidence !== 'high') return false;
   if (hit.confidence === 'low') return false;
-  if (hit.source === 'website' && hit.corroborated !== true) return false;
+  if (hit.source === 'website' && hit.corroborated !== true && (hit.confidence_score ?? 0) < 0.8) {
+    return false;
+  }
   if (hit.source === 'ca_bizfile' && hit.match_method === 'trigram' && hit.city_match !== true) {
     return false;
   }

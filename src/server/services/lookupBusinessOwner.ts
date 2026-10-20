@@ -139,7 +139,7 @@ export function firstUseEnvelope(): Record<string, unknown> {
     serper_credits: estimateSerperCredits(FIRST_USE_ASSUMED_TOTAL),
     serper_usd: estimateSerperUsd(FIRST_USE_ASSUMED_TOTAL),
     serper_note:
-      'Serper-first (google.serper.dev, SERPER_API_KEY): DBA resolver + 5 owner queries/row. Apify is only the blocked-HTML / CA hybrid fallback, behind APIFY_MAX_USD. Never paid datasets.',
+      'Serper-first (google.serper.dev, SERPER_API_KEY): ≤8 queries/company, stop at 0.8. Apify + Serper share TOTAL_MAX_USD (falls back to APIFY_MAX_USD). Never paid datasets.',
     ca_note:
       'calicodev/calico developer API is government-agencies-only. Public bizfileOnline + SI; Apify Playwright + residential when Incapsula/Imperva blocks datacenter IPs. ca_batch / --ca-batch: one sticky Playwright session (groups-RESIDENTIAL), Incapsula once, then hundreds of companies (search + SI PDF).',
     ca_batch_usd_50: estimateCaBatchUsd(50),
@@ -267,7 +267,7 @@ async function runLookupJob(
     const otherRows = caBatch ? rows.filter((row) => normalizeState(row.state) !== 'CA') : rows;
     const record = (row: NameLookupInput, result: NameLookupResult) => {
       applyLookupHit(snapshot, row, result, samples, rows.length);
-      snapshot.apify_usd_spent = Number((ctx.spend?.usd ?? snapshot.apify_usd_spent).toFixed(2));
+      snapshot.apify_usd_spent = Number((ctx.spend?.apifyUsd ?? ctx.spend?.usd ?? snapshot.apify_usd_spent).toFixed(2));
       snapshot.apify_compute_units = Number((ctx.spend?.computeUnits ?? 0).toFixed(4));
       snapshot.apify_proxy_gb = Number((ctx.spend?.proxyGb ?? 0).toFixed(4));
       if (ctx.serper) {
@@ -291,7 +291,7 @@ async function runLookupJob(
         otherRows,
         lanes,
         async (row) => {
-          if (lookupDeadlineExceeded(ctx)) {
+          if (lookupDeadlineExceeded(ctx) || ctx.spend?.exhausted()) {
             return {
               people: [],
               coverage_reason: 'blocked' as const,
@@ -302,6 +302,7 @@ async function runLookupJob(
           return resolveNameLookup(row, ctx);
         },
         {
+          shouldStop: () => lookupDeadlineExceeded(ctx) || Boolean(ctx.spend?.exhausted()),
           onItem: (row, result) => {
             record(row, result);
           },
@@ -309,7 +310,7 @@ async function runLookupJob(
       );
     }
     snapshot.sample = samples;
-    snapshot.apify_usd_spent = Number((ctx.spend?.usd ?? snapshot.apify_usd_spent).toFixed(2));
+    snapshot.apify_usd_spent = Number((ctx.spend?.apifyUsd ?? ctx.spend?.usd ?? snapshot.apify_usd_spent).toFixed(2));
     snapshot.apify_compute_units = Number((ctx.spend?.computeUnits ?? snapshot.apify_compute_units ?? 0).toFixed(4));
     snapshot.apify_proxy_gb = Number((ctx.spend?.proxyGb ?? snapshot.apify_proxy_gb ?? 0).toFixed(4));
     if (ctx.serper) {

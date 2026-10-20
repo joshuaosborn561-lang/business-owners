@@ -21,10 +21,10 @@ HTTP: `POST /mcp` (Streamable HTTP), `GET /health`, `GET /mcp/health`. Stdio: `n
 1. **DBA → legal name** (Serper-first): site footer / privacy / terms / copyright, then `"<name>" <city> LLC OR Inc`, then Google Maps/GBP, then free county fictitious-business-name snippets. Passes the input `website` column through.
 2. **Serper owner** for every state. High confidence (≥0.8) can skip SOS. Sunbiz snippets drop dates/labels and normalize LAST FIRST.
 3. **Official SOS** after a Serper miss, including free HTML/bulk for **TX, GA, IL, MN, UT, WA**. **CA hybrid:** `dz_omar/california-bizfile-scraper` then `apify/web-fetch` SI PDFs. CA prefers owner/CEO/President over CFO. Playwright UI is Incapsula-blocked (`ca_playwright` is opt-in).
-4. **Agent-only fallback:** About page (strict person-name validator; confidence ≤0.6, not waterfall-ready unless a second source agrees) → Serper LinkedIn (`owner OR founder OR president` + company + city) → find-named-person HTTP if `FIND_NAMED_PERSON_URL` is set.
-5. Every person gets a **confidence band + 0–1 score**. Registered agents are never waterfall-ready.
+4. **Agent-only fallback:** About page (title-adjacent owner/President/CEO is accepted; otherwise needs LinkedIn/SOS) → Serper LinkedIn (`owner OR founder OR president` + company + city) → find-named-person HTTP if `FIND_NAMED_PERSON_URL` is set.
+5. Every person gets a **confidence band + 0–1 score**. Owner/President/CEO rank above VP/CFO on every route. Registered agents are never waterfall-ready.
 
-Prefer **Serper over Apify**. Never paid Store datasets. `APIFY_MAX_USD` is a hard cap (shared file-backed spend, billed `usageTotalUsd` per run). Per-company Apify ceiling: `APIFY_USD_PER_COMPANY` (default **$0.02**). Direct SOS HTTP first (≤15s); Apify only on 403 / captcha / Incapsula — not on not-found or timeout. TX Comptroller is free HTTP. Live probes: **≤5 companies**, `APIFY_MAX_USD=2`.
+Prefer **Serper over Apify**. Never paid Store datasets. `TOTAL_MAX_USD` is the unified Apify + Serper cap (falls back to `APIFY_MAX_USD`). Apify is billed from each finished run (`usageTotalUsd` + pay-per-event). Serper is **$0.001**/query, **≤8 queries/company**, stop at 0.8. Direct SOS HTTP first (≤15s); residential proxy only for bot-block states; Apify only on 403 / captcha / Incapsula. TX Comptroller FTAS JSON and FL Sunbiz ByName are direct HTTP. Live probes: **≤5 companies**, `TOTAL_MAX_USD=3`.
 
 ## Skip (agent-only, later phase)
 

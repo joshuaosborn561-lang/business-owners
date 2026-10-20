@@ -1,4 +1,5 @@
 import { getBoardFetch, type FetchLike } from '../http.js';
+import { totalMaxUsdFromEnv } from './spend.js';
 import type { NameLookupInput } from './types.js';
 import {
   ApifySpendTracker,
@@ -50,6 +51,10 @@ export interface LookupContext {
   /** Fixture payload for Arizona Business Center JSON. */
   azPayload?: unknown;
   azDetailPayload?: unknown;
+  /** Cached residential proxy fetch (bot-block states only). */
+  proxyFetch?: FetchLike | null;
+  /** Unified Apify + Serper cap. Env: TOTAL_MAX_USD (falls back to APIFY_MAX_USD). */
+  totalMaxUsd?: number | null;
   /** Hard cap for Apify spend this context. Env: APIFY_MAX_USD. */
   apifyMaxUsd?: number | null;
   /** Per-company Apify ceiling. Env: APIFY_USD_PER_COMPANY (default $0.02). */
@@ -149,7 +154,7 @@ export function lookupDeadlineExceeded(ctx?: LookupContext): boolean {
 
 export function defaultLookupContext(overrides: LookupContext = {}): LookupContext {
   const persistPath = overrides.apifySpendFile ?? apifySpendFileFromEnv();
-  const capUsd = overrides.apifyMaxUsd ?? apifyMaxUsdFromEnv();
+  const capUsd = overrides.totalMaxUsd ?? totalMaxUsdFromEnv() ?? overrides.apifyMaxUsd ?? apifyMaxUsdFromEnv();
   const companyCap = overrides.apifyUsdPerCompany ?? apifyUsdPerCompanyFromEnv();
   const spend =
     overrides.spend ??

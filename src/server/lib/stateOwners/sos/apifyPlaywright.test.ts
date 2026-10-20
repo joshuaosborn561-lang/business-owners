@@ -143,6 +143,47 @@ describe('Apify policy', () => {
     assert.equal(spend.runs, 1);
   });
 
+  it('bills usageTotalUsd plus chargedEventCounts after the run finishes', async () => {
+    const spend = new ApifySpendTracker();
+    const fetchFn: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const billed = {
+        id: 'run-ppe',
+        status: 'SUCCEEDED',
+        defaultDatasetId: 'ds-ppe',
+        usageTotalUsd: 0.006,
+        chargedEventCounts: { GET: 1 },
+        pricingInfo: {
+          pricingModel: 'PAY_PER_EVENT',
+          pricingPerEvent: { actorChargeEvents: { GET: { eventPriceUsd: 0.012 } } },
+        },
+      };
+      if (url.includes('/acts/') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ data: { ...billed, usageTotalUsd: 0 } }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('/actor-runs/run-ppe')) {
+        return new Response(JSON.stringify({ data: billed }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('/datasets/ds-ppe/items')) {
+        return new Response(JSON.stringify([{ url: 'https://example.test/x', html: '<html>ok</html>' }]), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('[]', { headers: { 'content-type': 'application/json' } });
+    };
+    const got = await apifyFetchHtml(
+      'https://example.test/x',
+      { live: true, apifyToken: 'token', spend, fetch: fetchFn, apifyUsageWaitMs: 50 },
+      { immediate: true },
+    );
+    assert.equal(got.usd, 0.018);
+    assert.equal(spend.usd, 0.018);
+  });
+
   it('tries apify/web-fetch before playwright when preferWebFetch is set', async () => {
     const spend = new ApifySpendTracker();
     const actors: string[] = [];

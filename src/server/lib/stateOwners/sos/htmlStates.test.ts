@@ -264,7 +264,9 @@ describe('HTML registry adapters', () => {
         live: true,
         fetch: async (input) => {
           const url = String(input);
-          const body = /coaGetPq|detail|t_coa_id/i.test(url) ? html('tx-coa-officers.html') : html('tx-search.html');
+          const body = /data-search\/franchise-tax\/|coaGetPq|detail|t_coa_id/i.test(url)
+            ? html('tx-coa-officers.html')
+            : html('tx-search.html');
           return new Response(body, { status: 200, headers: { 'content-type': 'text/html' } });
         },
         apifyFetchHtml: async () => {
@@ -318,7 +320,7 @@ describe('HTML registry adapters', () => {
     assert.equal(timed.coverage_reason, 'not_found');
   });
 
-  it('uses one Apify fallback for a WAF block, not one per TX search URL', async () => {
+  it('does not send TX Comptroller to Apify even on a WAF block', async () => {
     let http = 0;
     let apify = 0;
     const result = await resolveHtmlOfficerState(
@@ -330,19 +332,16 @@ describe('HTML registry adapters', () => {
           http += 1;
           return new Response('<html>_Incapsula_Resource</html>', { status: 403 });
         },
-        apifyFetchHtml: async (url) => {
+        apifyFetchHtml: async () => {
           apify += 1;
-          return {
-            html: /coaGetPq|detail|t_coa_id/i.test(url) ? html('tx-coa-officers.html') : html('tx-search.html'),
-            usd: 0.008,
-          };
+          return { html: html('tx-search.html'), usd: 0.008 };
         },
       },
     );
-    assert.ok(http >= 3, `expected every TX HTTP variant first, got ${http}`);
-    assert.ok(apify >= 1 && apify <= 2, `expected one search Apify (optional detail), got ${apify}`);
-    assert.equal(result.via_apify, true);
-    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE'));
+    assert.ok(http >= 1);
+    assert.equal(apify, 0);
+    assert.equal(result.via_apify, false);
+    assert.equal(result.coverage_reason, 'blocked');
   });
 
   it('uses the generic HTML adapter for other officer-publishing states', async () => {
@@ -361,5 +360,71 @@ describe('HTML registry adapters', () => {
     assert.equal(result.people[0]?.title, 'President');
     assert.ok(officerPriority(result.people[0]?.title || '') < officerPriority('Vice President'));
     assert.ok(result.people.some((p) => p.last_name === 'SAMPLE' && isWaterfallReady(p)));
+  });
+
+  it('reads TX Comptroller FTAS JSON officers and ranks President over CFO', async () => {
+    const result = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Austin', state: 'TX' },
+      'TX',
+      {
+        live: false,
+        htmlFor: (_state, kind) => (kind === 'search' ? html('tx-ftas-search.json') : html('tx-ftas-detail.json')),
+      },
+    );
+    assert.equal(result.coverage_reason, null);
+    assert.equal(result.people[0]?.title, 'President');
+    assert.equal(result.people[0]?.first_name, 'JANE');
+    assert.ok(officerPriority(result.people[0]?.title || '') < officerPriority('CFO'));
+  });
+
+  it('reads FL Sunbiz officers from ByName result fixtures and ranks President over VP', async () => {
+    const result = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Miami', state: 'FL' },
+      'FL',
+      {
+        live: false,
+        htmlFor: (_state, kind) => (kind === 'search' ? html('fl-sunbiz-search.html') : html('fl-sunbiz-detail.html')),
+      },
+    );
+    assert.equal(result.implemented, true);
+    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE' && p.first_name === 'JANE'));
+    assert.equal(result.people[0]?.title, 'President');
+    assert.ok(officerPriority('President') < officerPriority('Vice President'));
+  });
+
+  it('retries SOS with the DBA legal name even when the trade-name lookup was blocked', async () => {
+    let calls = 0;
+    const result = await resolveNameLookup(
+      { company_name: 'Sample Crew', city: 'Atlanta', state: 'GA' },
+      {
+        live: true,
+        serperEnabled: true,
+        htmlFor: (_state, kind, input) => {
+          calls += 1;
+          const name = String(input.company_name || '');
+          if (/Sample Crew/i.test(name)) {
+            return '<html>_Incapsula_Resource incident id 1</html>';
+          }
+          return kind === 'search' ? html('ga-search.html') : html('ga-detail.html');
+        },
+        serperOrganic: (query) => {
+          if (/LLC OR Inc/i.test(query) || /fictitious/i.test(query)) {
+            return {
+              organic: [
+                {
+                  title: 'Sample Builders LLC DBA Sample Crew',
+                  link: 'https://opencorporates.com/companies/us_ga/1',
+                  snippet: 'Legal name: Sample Builders LLC doing business as Sample Crew in Atlanta, GA.',
+                },
+              ],
+            };
+          }
+          return { organic: [] };
+        },
+      },
+    );
+    assert.match(result.legal_name || '', /Sample Builders LLC/i);
+    assert.ok(calls >= 2);
+    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE'));
   });
 });

@@ -4,7 +4,9 @@ import { ctxSpend, lookupDeadlineExceeded } from './context.js';
 import {
   APIFY_USD_PER_BLOCKED_LOOKUP,
   apifyMaxUsdFromEnv,
+  runHasBillData,
   usdFromApifyRun,
+  type ApifyRunBillShape,
 } from './spend.js';
 
 export const APIFY_PLAYWRIGHT_ACTOR = 'apify/playwright-scraper';
@@ -116,15 +118,8 @@ export interface ApifyHtmlResult {
   contentType?: string;
 }
 
-type RunData = {
+type RunData = ApifyRunBillShape & {
   defaultDatasetId?: string;
-  usageTotalUsd?: number;
-  usageUsd?: number;
-  usage?: Record<string, number>;
-  stats?: { computeUnits?: number; netRxBytes?: number; netTxBytes?: number };
-  id?: string;
-  status?: string;
-  economics?: { totalUsd?: number };
 };
 
 async function apifyJson(url: string, init: RequestInit, fetchFn: typeof fetch): Promise<unknown> {
@@ -155,8 +150,7 @@ function runTerminal(status?: string): boolean {
 }
 
 function reportedRunUsd(run: RunData | null | undefined): number {
-  const n = Number(run?.usageTotalUsd ?? run?.usageUsd ?? run?.economics?.totalUsd ?? 0);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  return runHasBillData(run) ? 1 : 0;
 }
 
 function usageWaitMs(ctx?: LookupContext): number {
@@ -170,6 +164,19 @@ function usageWaitMs(ctx?: LookupContext): number {
   return 8_000;
 }
 
+async function getActorRun(
+  runId: string,
+  token: string,
+  fetchFn: typeof fetch,
+): Promise<RunData | null> {
+  const wrap = (await apifyJson(
+    `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`,
+    { headers: { Accept: 'application/json', 'User-Agent': DESKTOP_UA } },
+    fetchFn,
+  )) as { data?: RunData };
+  return wrap?.data || null;
+}
+
 async function pollRun(
   runId: string,
   token: string,
@@ -179,32 +186,51 @@ async function pollRun(
 ): Promise<RunData | null> {
   const started = Date.now();
   let last: RunData | null = null;
-  while (Date.now() - started < pollMaxMs) {
-    const wrap = (await apifyJson(
-      `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`,
-      { headers: { Accept: 'application/json', 'User-Agent': DESKTOP_UA } },
-      fetchFn,
-    )) as { data?: RunData };
-    last = wrap?.data || null;
+  do {
+    last = await getActorRun(runId, token, fetchFn);
     if (runTerminal(last?.status)) {
       if (waitForUsageMs > 0 && reportedRunUsd(last) <= 0) {
         const usageDeadline = Date.now() + waitForUsageMs;
         while (Date.now() < usageDeadline) {
-          await sleep(Math.min(1000, Math.max(200, usageDeadline - Date.now())));
-          const again = (await apifyJson(
-            `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`,
-            { headers: { Accept: 'application/json', 'User-Agent': DESKTOP_UA } },
-            fetchFn,
-          )) as { data?: RunData };
-          last = again?.data || last;
-          if (reportedRunUsd(last) > 0) return last;
+          await sleep(Math.min(1000, Math.max(50, usageDeadline - Date.now())));
+          const again = await getActorRun(runId, token, fetchFn);
+          last = again || last;
+          if (runHasBillData(last)) return last;
         }
       }
       return last;
     }
+    if (Date.now() - started >= pollMaxMs) break;
     await sleep(POLL_MS);
-  }
+  } while (Date.now() - started < pollMaxMs);
   return last;
+}
+
+/** Always GET the finished run so usageTotalUsd + PPE prices are on the ledger. */
+async function settleFinishedRun(
+  run: RunData | undefined,
+  token: string,
+  fetchFn: typeof fetch,
+  waitForUsageMs: number,
+  pollMaxMs = POLL_MAX_MS,
+): Promise<RunData | undefined> {
+  if (!run?.id) return run;
+  if (!runTerminal(run.status)) {
+    const polled = await pollRun(run.id, token, fetchFn, pollMaxMs, waitForUsageMs);
+    return polled ? { ...run, ...polled } : run;
+  }
+  if (runHasBillData(run) && waitForUsageMs <= 0) {
+    const latest = await getActorRun(run.id, token, fetchFn);
+    return latest ? { ...run, ...latest } : run;
+  }
+  const polled = await pollRun(
+    run.id,
+    token,
+    fetchFn,
+    Math.max(waitForUsageMs, 1),
+    waitForUsageMs,
+  );
+  return polled ? { ...run, ...polled } : run;
 }
 
 function companyKeyOf(ctx?: LookupContext): string | null {
@@ -474,13 +500,7 @@ async function runActorPages(
     return out;
   }
 
-  if (run?.id && !runTerminal(run.status)) {
-    const polled = await pollRun(run.id, token, fetchFn, POLL_MAX_MS, usageWaitMs(ctx));
-    if (polled) run = { ...run, ...polled };
-  } else if (run?.id && reportedRunUsd(run) <= 0) {
-    const polled = await pollRun(run.id, token, fetchFn, Math.max(usageWaitMs(ctx), 1000), usageWaitMs(ctx));
-    if (polled) run = { ...run, ...polled };
-  }
+  run = await settleFinishedRun(run, token, fetchFn, usageWaitMs(ctx));
 
   const succeeded = run?.status === 'SUCCEEDED';
   const cost = usdFromApifyRun(run, { succeeded, started: Boolean(run?.id) });
@@ -647,13 +667,7 @@ export async function runPlaywrightActor(
     return emptyActorRun(true);
   }
 
-  if (run?.id && !runTerminal(run.status)) {
-    const polled = await pollRun(run.id, token, fetchFn, opts.pollMaxMs ?? POLL_MAX_MS, usageWaitMs(ctx));
-    if (polled) run = { ...run, ...polled };
-  } else if (run?.id && reportedRunUsd(run) <= 0) {
-    const polled = await pollRun(run.id, token, fetchFn, Math.max(usageWaitMs(ctx), 1000), usageWaitMs(ctx));
-    if (polled) run = { ...run, ...polled };
-  }
+  run = await settleFinishedRun(run, token, fetchFn, usageWaitMs(ctx), opts.pollMaxMs ?? POLL_MAX_MS);
 
   const succeeded = run?.status === 'SUCCEEDED';
   const cost = usdFromApifyRun(run, { succeeded, started: Boolean(run?.id) });
@@ -737,13 +751,7 @@ export async function runApifyActorRaw(
     return emptyActorRun(true);
   }
 
-  if (run?.id && !runTerminal(run.status)) {
-    const polled = await pollRun(run.id, token, fetchFn, opts.pollMaxMs ?? POLL_MAX_MS, usageWaitMs(ctx));
-    if (polled) run = { ...run, ...polled };
-  } else if (run?.id && reportedRunUsd(run) <= 0) {
-    const polled = await pollRun(run.id, token, fetchFn, Math.max(usageWaitMs(ctx), 1000), usageWaitMs(ctx));
-    if (polled) run = { ...run, ...polled };
-  }
+  run = await settleFinishedRun(run, token, fetchFn, usageWaitMs(ctx), opts.pollMaxMs ?? POLL_MAX_MS);
 
   const succeeded = run?.status === 'SUCCEEDED';
   const cost = usdFromApifyRun(run, { succeeded, started: Boolean(run?.id) });

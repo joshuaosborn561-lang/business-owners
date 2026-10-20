@@ -12,6 +12,8 @@ export * from './spend.js';
 export * from './officers.js';
 export * from './ilDta.js';
 export * from './htmlStates.js';
+export * from './txComptroller.js';
+export * from './flSunbiz.js';
 export * from './agentStates.js';
 export * from './azCenter.js';
 export * from './pool.js';

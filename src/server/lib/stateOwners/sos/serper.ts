@@ -3,6 +3,13 @@ import type { LookupContext } from './context.js';
 import { ctxFetch, ctxSerper, serperKeyFromEnv } from './context.js';
 import type { SerperOrganicHit, SerperPlacesResponse, SerperSearchResponse } from './types.js';
 
+/** Charge 1 Serper credit on the unified TOTAL_MAX_USD ledger. False = skip the vendor call. */
+export function chargeSerperQuery(ctx?: LookupContext): boolean {
+  if (ctx?.spend && !ctx.spend.reserveSerper(1, ctx.companyKey)) return false;
+  ctxSerper(ctx).add(1);
+  return true;
+}
+
 export const SERPER_SEARCH_URL = 'https://google.serper.dev/search';
 export const SERPER_PLACES_URL = 'https://google.serper.dev/places';
 
@@ -22,9 +29,9 @@ export async function serperSearch(query: string, ctx?: LookupContext): Promise<
   if (!q) return { organic: [] };
 
   if (ctx?.serperOrganic) {
+    if (!chargeSerperQuery(ctx)) return { organic: [] };
     const payload =
       typeof ctx.serperOrganic === 'function' ? await ctx.serperOrganic(q) : ctx.serperOrganic;
-    ctxSerper(ctx).add(1);
     return payload && typeof payload === 'object' ? payload : { organic: [] };
   }
 
@@ -47,8 +54,8 @@ export async function serperSearch(query: string, ctx?: LookupContext): Promise<
       body: JSON.stringify({ q, gl: 'us', hl: 'en', num: 10 }),
     });
     if (!res.ok) return { organic: [] };
+    if (!chargeSerperQuery(ctx)) return { organic: [] };
     const json = (await res.json()) as SerperSearchResponse;
-    ctxSerper(ctx).add(1);
     return json && typeof json === 'object' ? json : { organic: [] };
   } catch {
     return { organic: [] };
@@ -63,7 +70,7 @@ export async function serperPlaces(query: string, ctx?: LookupContext): Promise<
   if (!q) return { places: [] };
 
   if (ctx?.serperOrganic) {
-    ctxSerper(ctx).add(1);
+    if (!chargeSerperQuery(ctx)) return { places: [] };
     return { places: [] };
   }
   if (ctx?.serperEnabled === false) return { places: [] };
@@ -85,8 +92,8 @@ export async function serperPlaces(query: string, ctx?: LookupContext): Promise<
       body: JSON.stringify({ q, gl: 'us', hl: 'en' }),
     });
     if (!res.ok) return { places: [] };
+    if (!chargeSerperQuery(ctx)) return { places: [] };
     const json = (await res.json()) as SerperPlacesResponse;
-    ctxSerper(ctx).add(1);
     return json && typeof json === 'object' ? json : { places: [] };
   } catch {
     return { places: [] };

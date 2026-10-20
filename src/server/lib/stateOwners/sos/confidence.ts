@@ -56,6 +56,7 @@ export function scoreOwnerConfidence(input: ConfidenceInput): { band: OwnerConfi
   score = Math.max(0, Math.min(1, Number(score.toFixed(3))));
   if (input.source === 'website') {
     if (input.corroborated) score = Math.max(score, 0.82);
+    else if (input.title_leadership) score = Math.max(score, 0.8);
     else score = Math.min(score, 0.6);
   }
   const band: OwnerConfidence = score >= 0.8 ? 'high' : score >= 0.55 ? 'medium' : 'low';

@@ -274,6 +274,9 @@ export async function resolveNameLookup(
     input = { ...input, domain: domainFromWebsite(input.website) };
   }
   ctx = { ...(ctx || {}), companyKey: companySpendKey(input) };
+  if (ctx.spend?.exhausted()) {
+    return emptyNameResult(input, 'blocked', 'us_sos', { implemented: true });
+  }
 
   const dba = await resolveDbaLegalName(input, ctx);
   const legalName = dba.legal_name && dba.legal_name !== company ? dba.legal_name : null;
@@ -284,11 +287,7 @@ export async function resolveNameLookup(
   }
 
   let official = await resolveOfficialNameLookup(input, ctx);
-  if (
-    legalName &&
-    official.coverage_reason !== 'blocked' &&
-    !official.people.some((p) => isWaterfallReady(p))
-  ) {
+  if (legalName && !official.people.some((p) => isWaterfallReady(p))) {
     const retry = await resolveOfficialNameLookup({ ...input, company_name: legalName }, ctx);
     const retryReady = retry.people.some((p) => isWaterfallReady(p));
     const officialReady = official.people.some((p) => isWaterfallReady(p));

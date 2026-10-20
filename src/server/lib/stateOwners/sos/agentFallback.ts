@@ -1,6 +1,7 @@
 import {
   extractTitleAdjacentPeople,
   isJobTitlePersonName,
+  isOwnerTypeTitle,
   normalizeCompanyName,
   normalizeState,
   pageMentionsPerson,
@@ -11,7 +12,7 @@ import type { LookupContext } from './context.js';
 import { attachConfidence } from './confidence.js';
 import { lookupFindNamedPerson } from './findNamedPerson.js';
 import { officersFromSerperBlob } from './serperOwners.js';
-import { parseOfficerRoster } from './officers.js';
+import { officerPriority, parseOfficerRoster } from './officers.js';
 import { organicFromSerperPayload, serperSearch } from './serper.js';
 import { SERPER_USD_PER_QUERY } from './spend.js';
 import { domainFromWebsite, fetchSiteText, originFromInput } from './siteFetch.js';
@@ -68,6 +69,7 @@ function hitFromAbout(
 ): WaterfallOwnerHit | null {
   const verdict = validateWebsitePersonName(name, [input.city]);
   if (!verdict.ok) return null;
+  const leadership = isOwnerTypeTitle(title);
   return attachConfidence(
     {
       first_name: verdict.first_name,
@@ -83,7 +85,7 @@ function hitFromAbout(
       coverage_reason: null,
       corroborated,
     },
-    { title_leadership: true, city_match: true, corroborated },
+    { title_leadership: leadership, city_match: true, corroborated },
   );
 }
 
@@ -122,7 +124,11 @@ function peopleFromAboutText(
       existing.corroborated = true;
       Object.assign(
         existing,
-        attachConfidence(existing, { title_leadership: true, city_match: true, corroborated: true }),
+        attachConfidence(existing, {
+          title_leadership: isOwnerTypeTitle(existing.title || person.title || ''),
+          city_match: true,
+          corroborated: true,
+        }),
       );
       continue;
     }
@@ -130,6 +136,7 @@ function peopleFromAboutText(
     const full = `${person.first_name} ${person.last_name}`;
     push(hitFromAbout(input, full, person.title || 'Owner', url, true));
   }
+  out.sort((a, b) => officerPriority(a.title || '') - officerPriority(b.title || ''));
   return out;
 }
 
@@ -236,6 +243,18 @@ export async function resolveAgentFallback(
       coverage_reason: null,
       source: 'linkedin',
       source_url: scoredLi.source_url,
+      implemented: true,
+      via_serper: credits > 0,
+      serper_credits: credits,
+      serper_usd: Number((credits * SERPER_USD_PER_QUERY).toFixed(4)),
+    };
+  }
+  if (about && li.hit && officerPriority(about.title || '') < officerPriority(li.hit.title || '')) {
+    return {
+      people: [about, li.hit],
+      coverage_reason: null,
+      source: 'website',
+      source_url: about.source_url,
       implemented: true,
       via_serper: credits > 0,
       serper_credits: credits,

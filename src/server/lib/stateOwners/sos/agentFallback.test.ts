@@ -16,7 +16,7 @@ describe('agent fallback', () => {
     assert.match(q, /San Diego/);
   });
 
-  it('takes an About-page founder but does not mark website-only hits waterfall-ready', async () => {
+  it('accepts a title-adjacent About owner without a second source', async () => {
     const html =
       '<html><body><h1>About us</h1><p>Harbor Dental was founded by Maya Chen, President, in San Diego.</p></body></html>';
     const got = await resolveAgentFallback(
@@ -31,9 +31,8 @@ describe('agent fallback', () => {
     assert.match(got.people[0]?.first_name || '', /maya/i);
     assert.match(got.people[0]?.last_name || '', /chen/i);
     assert.equal(got.people[0]?.corroborated, false);
-    assert.equal(isWaterfallReady(got.people[0]!), false);
-    assert.ok((got.people[0]?.confidence_score ?? 0) <= 0.6);
-    assert.ok((got.people[0]?.confidence_score ?? 0) >= 0.55);
+    assert.equal(isWaterfallReady(got.people[0]!), true);
+    assert.ok((got.people[0]?.confidence_score ?? 0) >= 0.8);
   });
 
   it('rejects nav/menu words from an About page', async () => {
@@ -125,7 +124,8 @@ describe('agent fallback', () => {
     assert.match(got.people[0]?.first_name || '', /jane/i);
     assert.match(got.people[0]?.last_name || '', /sample/i);
     assert.equal(got.people[0]?.corroborated, false);
-    assert.ok((got.people[0]?.confidence_score ?? 0) <= 0.6);
+    assert.ok((got.people[0]?.confidence_score ?? 0) >= 0.8);
+    assert.equal(isWaterfallReady(got.people[0]!), true);
   });
 
   it('accepts an About name that matches a Serper/SOS corroborator', async () => {

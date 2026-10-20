@@ -12,6 +12,8 @@ import {
   catalogByCode,
 } from './catalog.js';
 import { isEmptyJsShell, resolveArizona, AZ_SEARCH_UI } from './azCenter.js';
+import { resolveTexasComptroller, TX_FTAS_SEARCH } from './txComptroller.js';
+import { resolveFloridaSunbiz } from './flSunbiz.js';
 
 interface SearchHit {
   name: string;
@@ -22,8 +24,8 @@ interface SearchHit {
 const GA_SEARCH = 'https://ecorp.sos.ga.gov/BusinessSearch';
 const NC_SEARCH = 'https://www.sosnc.gov/online_services/search/by_title/_Business_Registration';
 const AZ_SEARCH = AZ_SEARCH_UI;
-const TX_SEARCH = 'https://mycpa.cpa.state.tx.us/coa/search.do';
-const MN_SEARCH = 'https://mblsportal.sos.state.mn.us/Business/Search';
+const TX_SEARCH = TX_FTAS_SEARCH;
+const MN_SEARCH = 'https://mblsportal.sos.mn.gov/Business/Search';
 const UT_SEARCH = 'https://businessregistration.utah.gov/EntitySearch/OnlineEntitySearch';
 const WA_SEARCH = 'https://ccfs.sos.wa.gov/';
 
@@ -104,12 +106,11 @@ function originOf(url: string, fallback: string): string {
 }
 
 function txSearchUrls(company: string): Array<{ url: string; base: string }> {
-  const q = encodeURIComponent(company.trim());
-  const base = 'https://mycpa.cpa.state.tx.us/';
+  const q = encodeURIComponent(company.trim().slice(0, 50));
+  const base = 'https://comptroller.texas.gov/';
   return [
-    { url: `${TX_SEARCH}?name=${q}`, base },
-    { url: `${TX_SEARCH}?searchBy=taxpayerName&taxpayerName=${q}`, base },
-    { url: `https://mycpa.cpa.state.tx.us/coa/search.do?entityName=${q}`, base },
+    { url: `https://comptroller.texas.gov/data-search/franchise-tax?name=${q}`, base },
+    { url: `${TX_SEARCH}`, base },
   ];
 }
 
@@ -154,7 +155,7 @@ export function searchUrlFor(state: string, company: string): { url: string; bas
   }
   if (state === 'FL') {
     return {
-      url: `https://search.sunbiz.org/Inquiry/CorporationSearch/SearchResults?inquiryType=EntityName&searchTerm=${q}`,
+      url: `https://search.sunbiz.org/Inquiry/CorporationSearch/ByName`,
       base: 'https://search.sunbiz.org/',
     };
   }
@@ -300,6 +301,8 @@ export async function resolveHtmlOfficerState(
   ctx?: LookupContext,
 ): Promise<NameLookupResult> {
   if (state === 'AZ') return resolveArizona(input, ctx);
+  if (state === 'TX') return resolveTexasComptroller(input, ctx);
+  if (state === 'FL') return resolveFloridaSunbiz(input, ctx);
   if (ctx) ctx.companyKey = ctx.companyKey || companySpendKey(input);
 
   const entry = catalogByCode().get(state);
@@ -332,8 +335,10 @@ export async function resolveHtmlOfficerState(
     }
   }
 
+  const apifyPolicy = catalogByCode().get(state)?.apify;
   // One residential fetch only after a real WAF block — never on not-found / timeout.
-  if (apifyWorthyUrl && !lookupDeadlineExceeded(ctx)) {
+  // TX/FL and apify:never states stay on direct HTTP (+ residential proxy in fetchOfficialPage).
+  if (apifyWorthyUrl && apifyPolicy !== 'never' && !lookupDeadlineExceeded(ctx)) {
     const search = await fetchOfficialPage(apifyWorthyUrl.url, ctx, {
       state,
       allowApify: true,

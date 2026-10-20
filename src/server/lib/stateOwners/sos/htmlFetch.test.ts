@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { fetchOfficialPage } from './htmlFetch.js';
+import { fetchOfficialPage, usesResidentialProxy } from './htmlFetch.js';
 import { ApifySpendTracker } from './spend.js';
 import { SOS_HTTP_TIMEOUT_MS } from './context.js';
 
@@ -63,6 +63,39 @@ describe('fetchOfficialPage Apify gate', () => {
     assert.equal(apify, 1);
     assert.equal(page.via_apify, true);
     assert.equal(page.blocked, false);
+    assert.match(page.body, /SAMPLE BUILDERS/);
+  });
+
+  it('tries a residential proxy before Apify on bot-block states and never on TX', async () => {
+    assert.equal(usesResidentialProxy('GA'), true);
+    assert.equal(usesResidentialProxy('FL'), true);
+    assert.equal(usesResidentialProxy('TX'), false);
+    let apify = 0;
+    let proxy = 0;
+    const page = await fetchOfficialPage(
+      'https://ecorp.sos.ga.gov/BusinessSearch',
+      {
+        live: true,
+        spend: new ApifySpendTracker({ capUsd: 2, companyCapUsd: 0.02 }),
+        fetch: async () => new Response('<html>_Incapsula_Resource</html>', { status: 403 }),
+        proxyFetch: async () => {
+          proxy += 1;
+          return new Response('<html><body>Entity Name SAMPLE BUILDERS LLC</body></html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          });
+        },
+        apifyFetchHtml: async () => {
+          apify += 1;
+          return { html: '<html>x</html>', usd: 0.015 };
+        },
+      },
+      { state: 'GA', allowApify: true, input: { ...input, state: 'GA', city: 'Atlanta' }, kind: 'search' },
+    );
+    assert.equal(proxy, 1);
+    assert.equal(apify, 0);
+    assert.equal(page.via_proxy, true);
+    assert.equal(page.via_apify, false);
     assert.match(page.body, /SAMPLE BUILDERS/);
   });
 

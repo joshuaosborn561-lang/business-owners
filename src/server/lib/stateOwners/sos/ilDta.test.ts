@@ -4,6 +4,7 @@ import {
   downloadIlDtaFiles,
   emptyIlIndex,
   ingestIlDtaText,
+  loadIlDtaDir,
   matchIlDta,
   parseCorpAnnualLine,
   parseIlDtaHomeLinks,
@@ -12,8 +13,9 @@ import {
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 describe('IL DTA bulk files', () => {
   it('parses a 126-byte corporate annual-report line', () => {
@@ -75,6 +77,27 @@ describe('IL DTA bulk files', () => {
         },
       });
       assert.ok(got.downloaded >= 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('unzips DTA archives already on disk instead of reading them as empty text', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'il-dta-zip-'));
+    try {
+      const tsv = [
+        'file_number\tlegal_name\tdba_name\tcity\tofficer_name\tofficer_title',
+        '20240001\tSAMPLE HVAC LLC\t\tChicago\tJANE SAMPLE\tMANAGER',
+      ].join('\n');
+      const inner = join(dir, 'officers.tsv');
+      writeFileSync(inner, tsv);
+      const zipPath = join(dir, 'llcallmgr.zip');
+      execFileSync('python3', ['-c', 'import zipfile,sys; zipfile.ZipFile(sys.argv[1],"w").write(sys.argv[2], "officers.tsv")', zipPath, inner]);
+      rmSync(inner);
+      const index = loadIlDtaDir(dir);
+      assert.ok(index.list.length >= 1, 'zip must be unzipped and ingested');
+      const hit = matchIlDta({ company_name: 'Sample HVAC LLC', city: 'Chicago', state: 'IL' }, index);
+      assert.equal(hit?.entity.officers[0]?.name, 'JANE SAMPLE');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
