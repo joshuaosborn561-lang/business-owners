@@ -1,8 +1,15 @@
-import { DESKTOP_UA, isChallengePage, looksBlocked } from '../http.js';
-import type { LookupContext } from './context.js';
-import { ctxFetch, fixtureHtml } from './context.js';
+import { DESKTOP_UA, isApifyWorthyBlock, isChallengePage, isTimeoutError, looksBlocked } from '../http.js';
+import {
+  SOS_HTTP_TIMEOUT_MS,
+  ctxFetch,
+  ctxSpend,
+  fixtureHtml,
+  lookupDeadlineExceeded,
+  type LookupContext,
+} from './context.js';
 import { apifyFetchHtml } from './apifyPlaywright.js';
 import { catalogByCode } from './catalog.js';
+import { APIFY_USD_PER_BLOCKED_LOOKUP, companySpendKey } from './spend.js';
 import type { NameLookupInput } from './types.js';
 
 export interface OfficialPage {
@@ -12,6 +19,8 @@ export interface OfficialPage {
   via_apify: boolean;
   blocked: boolean;
   usd: number;
+  apify_worthy?: boolean;
+  timed_out?: boolean;
 }
 
 function asOfficial(opts: {
@@ -29,7 +38,44 @@ function asOfficial(opts: {
     via_apify: opts.via_apify === true,
     blocked,
     usd: opts.usd || 0,
+    apify_worthy: isApifyWorthyBlock(opts.status, opts.body),
   };
+}
+
+function sosTimeoutMs(ctx?: LookupContext): number {
+  const requested = ctx?.httpTimeoutMs ?? SOS_HTTP_TIMEOUT_MS;
+  let cap = Math.max(1, Math.min(SOS_HTTP_TIMEOUT_MS, requested));
+  if (ctx?.deadlineAt) {
+    const remain = ctx.deadlineAt - Date.now();
+    if (remain <= 0) return 1;
+    cap = Math.min(cap, remain);
+  }
+  return cap;
+}
+
+function withTimeoutSignal(init: RequestInit | undefined, timeoutMs: number): RequestInit {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const existing = init?.signal;
+  const signal =
+    existing && typeof AbortSignal.any === 'function' ? AbortSignal.any([existing, timeout]) : timeout;
+  return { ...init, signal };
+}
+
+function canUseApify(
+  ctx: LookupContext | undefined,
+  input: NameLookupInput,
+  allowApify: boolean,
+): boolean {
+  if (!allowApify) return false;
+  if (ctx?.apifyEnabled === false) return false;
+  const entry = catalogByCode().get(input.state);
+  if (entry?.apify === 'never') return false;
+  if (lookupDeadlineExceeded(ctx)) return false;
+  const spend = ctxSpend(ctx);
+  const key = ctx?.companyKey || companySpendKey(input);
+  if (spend.wouldExceed(APIFY_USD_PER_BLOCKED_LOOKUP)) return false;
+  if (key && spend.remainingCompanyUsd(key) <= 0) return false;
+  return true;
 }
 
 export async function fetchOfficialPage(
@@ -53,46 +99,77 @@ export async function fetchOfficialPage(
   if (!ctx?.live) {
     return { status: 0, body: '', url, via_apify: false, blocked: false, usd: 0 };
   }
+  if (lookupDeadlineExceeded(ctx)) {
+    return { status: 0, body: '', url, via_apify: false, blocked: false, usd: 0, timed_out: true };
+  }
+
+  const prevKey = ctx.companyKey;
+  ctx.companyKey = ctx.companyKey || companySpendKey(opts.input);
 
   const fetchFn = ctxFetch(ctx);
   let status = 0;
   let body = '';
   try {
-    const res = await fetchFn(url, {
-      redirect: 'follow',
-      ...opts.init,
-      headers: {
-        'User-Agent': DESKTOP_UA,
-        Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        ...(opts.init?.headers || {}),
-      },
-    });
+    const res = await fetchFn(
+      url,
+      withTimeoutSignal(
+        {
+          redirect: 'follow',
+          ...opts.init,
+          headers: {
+            'User-Agent': DESKTOP_UA,
+            Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            ...(opts.init?.headers || {}),
+          },
+        },
+        sosTimeoutMs(ctx),
+      ),
+    );
     status = res.status;
     const buf = new Uint8Array(await res.arrayBuffer());
     body = Buffer.from(buf).toString('utf8');
-    const blocked = looksBlocked(status, body) || isChallengePage(body) || status === 0;
-    if (!blocked) {
-      return { status, body, url: res.url || url, via_apify: false, blocked: false, usd: 0 };
+    const worthy = isApifyWorthyBlock(status, body);
+    const blocked = looksBlocked(status, body) || isChallengePage(body);
+    if (!worthy) {
+      ctx.companyKey = prevKey;
+      return {
+        status,
+        body: blocked ? '' : body,
+        url: res.url || url,
+        via_apify: false,
+        blocked,
+        usd: 0,
+        apify_worthy: false,
+      };
     }
-    if (!opts.allowApify) {
-      return { status, body: '', url, via_apify: false, blocked: true, usd: 0 };
+    if (!canUseApify(ctx, opts.input, opts.allowApify)) {
+      ctx.companyKey = prevKey;
+      return { status, body: '', url, via_apify: false, blocked: true, usd: 0, apify_worthy: true };
     }
-  } catch {
-    if (!opts.allowApify) return { status: 0, body: '', url, via_apify: false, blocked: true, usd: 0 };
+  } catch (err) {
+    ctx.companyKey = prevKey;
+    const timedOut = isTimeoutError(err) || lookupDeadlineExceeded(ctx);
+    return {
+      status: 0,
+      body: '',
+      url,
+      via_apify: false,
+      blocked: false,
+      usd: 0,
+      timed_out: timedOut || true,
+      apify_worthy: false,
+    };
   }
 
-  const entry = catalogByCode().get(opts.state);
-  if (!opts.allowApify || entry?.apify === 'never' || ctx?.apifyEnabled === false) {
-    return { status, body: '', url, via_apify: false, blocked: true, usd: 0 };
-  }
   const got = await apifyFetchHtml(url, ctx, { preferWebFetch: true });
+  ctx.companyKey = prevKey;
   if (got.refused) {
-    return { status: status || 0, body: '', url, via_apify: false, blocked: true, usd: 0 };
+    return { status: status || 0, body: '', url, via_apify: false, blocked: true, usd: 0, apify_worthy: true };
   }
   const html = got.html || got.text;
   if (!html || looksBlocked(200, html) || isChallengePage(html)) {
-    return { status: status || 0, body: '', url, via_apify: true, blocked: true, usd: got.usd };
+    return { status: status || 0, body: '', url, via_apify: true, blocked: true, usd: got.usd, apify_worthy: true };
   }
   return {
     status: 200,
@@ -101,5 +178,6 @@ export async function fetchOfficialPage(
     via_apify: true,
     blocked: false,
     usd: got.usd,
+    apify_worthy: true,
   };
 }

@@ -1,6 +1,6 @@
-import { DESKTOP_UA } from '../http.js';
+import { DESKTOP_UA, getBoardFetch } from '../http.js';
 import type { LookupContext } from './context.js';
-import { ctxSpend } from './context.js';
+import { ctxSpend, lookupDeadlineExceeded } from './context.js';
 import {
   APIFY_USD_PER_BLOCKED_LOOKUP,
   apifyMaxUsdFromEnv,
@@ -119,10 +119,12 @@ export interface ApifyHtmlResult {
 type RunData = {
   defaultDatasetId?: string;
   usageTotalUsd?: number;
+  usageUsd?: number;
   usage?: Record<string, number>;
   stats?: { computeUnits?: number; netRxBytes?: number; netTxBytes?: number };
   id?: string;
   status?: string;
+  economics?: { totalUsd?: number };
 };
 
 async function apifyJson(url: string, init: RequestInit, fetchFn: typeof fetch): Promise<unknown> {
@@ -152,11 +154,28 @@ function runTerminal(status?: string): boolean {
   return ['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'].includes(String(status || ''));
 }
 
+function reportedRunUsd(run: RunData | null | undefined): number {
+  const n = Number(run?.usageTotalUsd ?? run?.usageUsd ?? run?.economics?.totalUsd ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function usageWaitMs(ctx?: LookupContext): number {
+  if (ctx?.apifyUsageWaitMs != null) return Math.max(0, Number(ctx.apifyUsageWaitMs) || 0);
+  const env = process.env.APIFY_USAGE_WAIT_MS;
+  if (env != null && env !== '') {
+    const n = Number(env);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  if (ctx?.fetch && ctx.fetch !== getBoardFetch()) return 0;
+  return 8_000;
+}
+
 async function pollRun(
   runId: string,
   token: string,
   fetchFn: typeof fetch,
   pollMaxMs = POLL_MAX_MS,
+  waitForUsageMs = 0,
 ): Promise<RunData | null> {
   const started = Date.now();
   let last: RunData | null = null;
@@ -167,10 +186,50 @@ async function pollRun(
       fetchFn,
     )) as { data?: RunData };
     last = wrap?.data || null;
-    if (runTerminal(last?.status)) return last;
+    if (runTerminal(last?.status)) {
+      if (waitForUsageMs > 0 && reportedRunUsd(last) <= 0) {
+        const usageDeadline = Date.now() + waitForUsageMs;
+        while (Date.now() < usageDeadline) {
+          await sleep(Math.min(1000, Math.max(200, usageDeadline - Date.now())));
+          const again = (await apifyJson(
+            `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`,
+            { headers: { Accept: 'application/json', 'User-Agent': DESKTOP_UA } },
+            fetchFn,
+          )) as { data?: RunData };
+          last = again?.data || last;
+          if (reportedRunUsd(last) > 0) return last;
+        }
+      }
+      return last;
+    }
     await sleep(POLL_MS);
   }
   return last;
+}
+
+function companyKeyOf(ctx?: LookupContext): string | null {
+  return ctx?.companyKey || null;
+}
+
+function prepareSpend(ctx?: LookupContext) {
+  const spend = ctxSpend(ctx);
+  const cap = capOf(ctx);
+  if (cap != null) spend.capUsd = cap;
+  if (ctx?.apifyUsdPerCompany != null) spend.companyCapUsd = ctx.apifyUsdPerCompany;
+  return spend;
+}
+
+function reserveOrRefuse(ctx: LookupContext | undefined, estimate: number): boolean {
+  if (lookupDeadlineExceeded(ctx)) {
+    ctxSpend(ctx).refuse();
+    return false;
+  }
+  const spend = prepareSpend(ctx);
+  if (!spend.reserve(estimate, companyKeyOf(ctx))) {
+    spend.refuse();
+    return false;
+  }
+  return true;
 }
 
 interface BatchJob {
@@ -238,12 +297,22 @@ export async function apifyFetchHtml(
   opts?: { pageFunction?: string; immediate?: boolean; documentBytes?: boolean; preferWebFetch?: boolean },
 ): Promise<ApifyHtmlResult> {
   if (ctx?.apifyFetchHtml) {
-    const got = await ctx.apifyFetchHtml(url);
-    if (got.refused) {
-      ctxSpend(ctx).refuse();
+    const spend = prepareSpend(ctx);
+    const key = companyKeyOf(ctx);
+    if (
+      lookupDeadlineExceeded(ctx) ||
+      spend.wouldExceed(APIFY_USD_PER_BLOCKED_LOOKUP) ||
+      (key != null && spend.remainingCompanyUsd(key) <= 0)
+    ) {
+      spend.refuse();
       return emptyRefused();
     }
-    if (got.usd > 0) ctxSpend(ctx).add(got.usd);
+    const got = await ctx.apifyFetchHtml(url);
+    if (got.refused) {
+      spend.refuse();
+      return emptyRefused();
+    }
+    if (got.usd > 0) spend.add(got.usd, { companyKey: companyKeyOf(ctx) });
     const bytes = got.bytesBase64 ? Buffer.from(got.bytesBase64, 'base64') : undefined;
     return {
       html: got.html || '',
@@ -261,10 +330,13 @@ export async function apifyFetchHtml(
     return emptyRefused();
   }
 
-  const spend = ctxSpend(ctx);
-  const cap = capOf(ctx);
-  if (cap != null) spend.capUsd = cap;
-  if (spend.wouldExceed(APIFY_USD_PER_BLOCKED_LOOKUP)) {
+  const spend = prepareSpend(ctx);
+  const liveKey = companyKeyOf(ctx);
+  if (
+    lookupDeadlineExceeded(ctx) ||
+    spend.wouldExceed(APIFY_USD_PER_BLOCKED_LOOKUP) ||
+    (liveKey != null && spend.remainingCompanyUsd(liveKey) <= 0)
+  ) {
     spend.refuse();
     return emptyRefused();
   }
@@ -349,12 +421,12 @@ async function runActorPages(
   const unique = [...new Set(urls.filter(Boolean))];
   if (!unique.length) return out;
 
-  const spend = ctxSpend(ctx);
-  if (spend.wouldExceed(APIFY_USD_PER_BLOCKED_LOOKUP)) {
-    spend.refuse();
+  const estimate = APIFY_USD_PER_BLOCKED_LOOKUP;
+  if (!reserveOrRefuse(ctx, estimate)) {
     for (const url of unique) out.set(url, emptyRefused());
     return out;
   }
+  const spend = ctxSpend(ctx);
 
   assertAllowedApifyActor(APIFY_PLAYWRIGHT_ACTOR);
   const fetchFn = (ctx?.fetch as typeof fetch) ?? fetch;
@@ -389,29 +461,35 @@ async function runActorPages(
     )) as { data?: RunData };
     run = runWrap?.data;
   } catch {
+    spend.release(estimate, companyKeyOf(ctx));
     spend.refuse();
     for (const url of unique) out.set(url, emptyRefused());
     return out;
   }
 
   if (!run?.id && !run?.defaultDatasetId) {
+    spend.release(estimate, companyKeyOf(ctx));
     spend.refuse();
     for (const url of unique) out.set(url, emptyRefused());
     return out;
   }
 
   if (run?.id && !runTerminal(run.status)) {
-    const polled = await pollRun(run.id, token, fetchFn);
+    const polled = await pollRun(run.id, token, fetchFn, POLL_MAX_MS, usageWaitMs(ctx));
+    if (polled) run = { ...run, ...polled };
+  } else if (run?.id && reportedRunUsd(run) <= 0) {
+    const polled = await pollRun(run.id, token, fetchFn, Math.max(usageWaitMs(ctx), 1000), usageWaitMs(ctx));
     if (polled) run = { ...run, ...polled };
   }
 
   const succeeded = run?.status === 'SUCCEEDED';
-  const cost = usdFromApifyRun(run, { succeeded });
-  if (cost.usd > 0 || cost.cu > 0 || cost.proxyGb > 0) {
-    spend.add(cost.usd, { cu: cost.cu, lookups: unique.length, proxyGb: cost.proxyGb });
-  } else if (!succeeded) {
-    spend.refuse();
-  }
+  const cost = usdFromApifyRun(run, { succeeded, started: Boolean(run?.id) });
+  spend.commit(cost.usd, estimate, {
+    cu: cost.cu,
+    lookups: unique.length,
+    proxyGb: cost.proxyGb,
+    companyKey: companyKeyOf(ctx),
+  });
 
   const datasetId = run?.defaultDatasetId;
   if (!datasetId || !succeeded) {
@@ -497,17 +575,15 @@ export async function runPlaywrightActor(
     ctxSpend(ctx).refuse();
     return emptyActorRun(true);
   }
-  const spend = ctxSpend(ctx);
-  const cap = capOf(ctx);
-  if (cap != null) spend.capUsd = cap;
-  if (spend.wouldExceed(opts.estimateUsd ?? APIFY_USD_PER_BLOCKED_LOOKUP)) {
-    spend.refuse();
-    return emptyActorRun(true);
-  }
+  const estimate = opts.estimateUsd ?? APIFY_USD_PER_BLOCKED_LOOKUP;
   if (!opts.startUrls.length || !opts.pageFunction) {
-    spend.refuse();
+    ctxSpend(ctx).refuse();
     return emptyActorRun(true);
   }
+  if (!reserveOrRefuse(ctx, estimate)) {
+    return emptyActorRun(true);
+  }
+  const spend = ctxSpend(ctx);
 
   assertAllowedApifyActor(APIFY_PLAYWRIGHT_ACTOR);
   const fetchFn = (ctx?.fetch as typeof fetch) ?? fetch;
@@ -560,27 +636,33 @@ export async function runPlaywrightActor(
     )) as { data?: RunData };
     run = runWrap?.data;
   } catch {
+    spend.release(estimate, companyKeyOf(ctx));
     spend.refuse();
     return emptyActorRun(true);
   }
 
   if (!run?.id && !run?.defaultDatasetId) {
+    spend.release(estimate, companyKeyOf(ctx));
     spend.refuse();
     return emptyActorRun(true);
   }
 
   if (run?.id && !runTerminal(run.status)) {
-    const polled = await pollRun(run.id, token, fetchFn, opts.pollMaxMs ?? POLL_MAX_MS);
+    const polled = await pollRun(run.id, token, fetchFn, opts.pollMaxMs ?? POLL_MAX_MS, usageWaitMs(ctx));
+    if (polled) run = { ...run, ...polled };
+  } else if (run?.id && reportedRunUsd(run) <= 0) {
+    const polled = await pollRun(run.id, token, fetchFn, Math.max(usageWaitMs(ctx), 1000), usageWaitMs(ctx));
     if (polled) run = { ...run, ...polled };
   }
 
   const succeeded = run?.status === 'SUCCEEDED';
-  const cost = usdFromApifyRun(run, { succeeded });
-  if (cost.usd > 0 || cost.cu > 0 || cost.proxyGb > 0) {
-    spend.add(cost.usd, { cu: cost.cu, lookups: opts.lookups ?? opts.startUrls.length, proxyGb: cost.proxyGb });
-  } else if (!succeeded) {
-    spend.refuse();
-  }
+  const cost = usdFromApifyRun(run, { succeeded, started: Boolean(run?.id) });
+  spend.commit(cost.usd, estimate, {
+    cu: cost.cu,
+    lookups: opts.lookups ?? opts.startUrls.length,
+    proxyGb: cost.proxyGb,
+    companyKey: companyKeyOf(ctx),
+  });
 
   const datasetId = run?.defaultDatasetId;
   let items: Array<Record<string, unknown>> = [];
@@ -621,13 +703,11 @@ export async function runApifyActorRaw(
     ctxSpend(ctx).refuse();
     return emptyActorRun(true);
   }
-  const spend = ctxSpend(ctx);
-  const cap = capOf(ctx);
-  if (cap != null) spend.capUsd = cap;
-  if (spend.wouldExceed(opts.estimateUsd ?? APIFY_USD_PER_BLOCKED_LOOKUP)) {
-    spend.refuse();
+  const estimate = opts.estimateUsd ?? APIFY_USD_PER_BLOCKED_LOOKUP;
+  if (!reserveOrRefuse(ctx, estimate)) {
     return emptyActorRun(true);
   }
+  const spend = ctxSpend(ctx);
   assertAllowedHybridActor(opts.actorId.includes('~') ? opts.actorId.replace('~', '/') : opts.actorId);
   const fetchFn = (ctx?.fetch as typeof fetch) ?? fetch;
   const actorId = opts.actorId.includes('~') ? opts.actorId : opts.actorId.replace('/', '~');
@@ -646,27 +726,33 @@ export async function runApifyActorRaw(
     )) as { data?: RunData };
     run = runWrap?.data;
   } catch {
+    spend.release(estimate, companyKeyOf(ctx));
     spend.refuse();
     return emptyActorRun(true);
   }
 
   if (!run?.id && !run?.defaultDatasetId) {
+    spend.release(estimate, companyKeyOf(ctx));
     spend.refuse();
     return emptyActorRun(true);
   }
 
   if (run?.id && !runTerminal(run.status)) {
-    const polled = await pollRun(run.id, token, fetchFn, opts.pollMaxMs ?? POLL_MAX_MS);
+    const polled = await pollRun(run.id, token, fetchFn, opts.pollMaxMs ?? POLL_MAX_MS, usageWaitMs(ctx));
+    if (polled) run = { ...run, ...polled };
+  } else if (run?.id && reportedRunUsd(run) <= 0) {
+    const polled = await pollRun(run.id, token, fetchFn, Math.max(usageWaitMs(ctx), 1000), usageWaitMs(ctx));
     if (polled) run = { ...run, ...polled };
   }
 
   const succeeded = run?.status === 'SUCCEEDED';
-  const cost = usdFromApifyRun(run, { succeeded });
-  if (cost.usd > 0 || cost.cu > 0 || cost.proxyGb > 0) {
-    spend.add(cost.usd, { cu: cost.cu, lookups: opts.lookups ?? 1, proxyGb: cost.proxyGb });
-  } else if (!succeeded) {
-    spend.refuse();
-  }
+  const cost = usdFromApifyRun(run, { succeeded, started: Boolean(run?.id) });
+  spend.commit(cost.usd, estimate, {
+    cu: cost.cu,
+    lookups: opts.lookups ?? 1,
+    proxyGb: cost.proxyGb,
+    companyKey: companyKeyOf(ctx),
+  });
 
   const datasetId = run?.defaultDatasetId;
   let items: Array<Record<string, unknown>> = [];

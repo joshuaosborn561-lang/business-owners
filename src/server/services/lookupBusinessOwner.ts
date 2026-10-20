@@ -16,9 +16,16 @@ import {
   type NameLookupInput,
   type NameLookupResult,
 } from '../lib/stateOwners/sos/index.js';
-import { defaultLookupContext } from '../lib/stateOwners/sos/context.js';
 import { mapPool } from '../lib/stateOwners/sos/pool.js';
 import { runCaBatch } from '../lib/stateOwners/sos/caBatch.js';
+import {
+  LOOKUP_CONCURRENCY_DEFAULT,
+  LOOKUP_CONCURRENCY_MAX,
+  defaultLookupContext,
+  lookupConcurrencyFromEnv,
+  lookupDeadlineExceeded,
+  lookupMaxSecondsFromEnv,
+} from '../lib/stateOwners/sos/context.js';
 import {
   APIFY_USD_PER_BLOCKED_LOOKUP,
   CA_APIFY_LOOKUPS_PER_ROW,
@@ -32,7 +39,7 @@ import {
 import { isWaterfallReady } from '../lib/stateOwners/sos/waterfall.js';
 
 export { APIFY_USD_PER_BLOCKED_LOOKUP };
-export const SOS_HTTP_LANES = 4;
+export const SOS_HTTP_LANES = LOOKUP_CONCURRENCY_DEFAULT;
 /** Existing write gate. Keep well under the 60-connection project cap. */
 export const OWNER_LOOKUP_WRITE_CONCURRENCY = 4;
 /** Phase 2 still does not persist people. CLI and MCP are counts / local CSV only. */
@@ -234,6 +241,7 @@ async function runLookupJob(
   opts: LookupBusinessOwnerOpts,
 ): Promise<BusinessOwnerJobSnapshot> {
   patchJob(snapshot.job_id, { status: 'running' });
+  const maxSeconds = lookupMaxSecondsFromEnv();
   const ctx = defaultLookupContext({
     ...(opts.context || {}),
     includeAgents: opts.include_agents === true || opts.context?.includeAgents === true,
@@ -242,8 +250,14 @@ async function runLookupJob(
     caPlaywright: opts.ca_playwright === true || opts.context?.caPlaywright === true,
     caHybridOnly: opts.ca_playwright === true ? false : opts.ca_hybrid_only !== false,
     caHybridMaxResultsPerQuery: opts.ca_max_results ?? opts.context?.caHybridMaxResultsPerQuery,
+    deadlineAt:
+      opts.context?.deadlineAt ??
+      (maxSeconds ? Date.now() + maxSeconds * 1000 : opts.context?.deadlineAt),
   });
-  const lanes = Math.max(1, Math.min(opts.concurrency ?? SOS_HTTP_LANES, 8));
+  const lanes = Math.max(
+    1,
+    Math.min(opts.concurrency ?? lookupConcurrencyFromEnv(), LOOKUP_CONCURRENCY_MAX),
+  );
   const samples: BusinessOwnerNamelessSample[] = [];
   try {
     const caBatch = opts.ca_batch === true;
@@ -251,25 +265,48 @@ async function runLookupJob(
     if (opts.ca_debug === true) snapshot.ca_debug = true;
     const caRows = caBatch ? rows.filter((row) => normalizeState(row.state) === 'CA') : [];
     const otherRows = caBatch ? rows.filter((row) => normalizeState(row.state) !== 'CA') : rows;
-    const resolved: Array<{ row: NameLookupInput; result: NameLookupResult }> = [];
+    const record = (row: NameLookupInput, result: NameLookupResult) => {
+      applyLookupHit(snapshot, row, result, samples, rows.length);
+      snapshot.apify_usd_spent = Number((ctx.spend?.usd ?? snapshot.apify_usd_spent).toFixed(2));
+      snapshot.apify_compute_units = Number((ctx.spend?.computeUnits ?? 0).toFixed(4));
+      snapshot.apify_proxy_gb = Number((ctx.spend?.proxyGb ?? 0).toFixed(4));
+      if (ctx.serper) {
+        snapshot.serper_credits = ctx.serper.credits;
+        snapshot.serper_usd = ctx.serper.usd;
+      }
+      snapshot.sample = samples.slice();
+      putJob(snapshot);
+    };
     if (caRows.length) {
       const batch = await runCaBatch(caRows, ctx, {
         jobId: snapshot.job_id,
         checkpointPath: ctx.caBatchCheckpointPath,
       });
       for (let i = 0; i < caRows.length; i++) {
-        resolved.push({ row: caRows[i], result: batch.results[i] });
+        record(caRows[i], batch.results[i]);
       }
     }
     if (otherRows.length) {
-      const rest = await mapPool(otherRows, lanes, async (row) => ({
-        row,
-        result: await resolveNameLookup(row, ctx),
-      }));
-      resolved.push(...rest);
-    }
-    for (const { row, result } of resolved) {
-      applyLookupHit(snapshot, row, result, samples, rows.length);
+      await mapPool(
+        otherRows,
+        lanes,
+        async (row) => {
+          if (lookupDeadlineExceeded(ctx)) {
+            return {
+              people: [],
+              coverage_reason: 'blocked' as const,
+              source: 'us_sos' as const,
+              implemented: true,
+            };
+          }
+          return resolveNameLookup(row, ctx);
+        },
+        {
+          onItem: (row, result) => {
+            record(row, result);
+          },
+        },
+      );
     }
     snapshot.sample = samples;
     snapshot.apify_usd_spent = Number((ctx.spend?.usd ?? snapshot.apify_usd_spent).toFixed(2));

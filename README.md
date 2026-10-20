@@ -24,7 +24,7 @@ HTTP: `POST /mcp` (Streamable HTTP), `GET /health`, `GET /mcp/health`. Stdio: `n
 4. **Agent-only fallback:** About page (strict person-name validator; confidence ≤0.6, not waterfall-ready unless a second source agrees) → Serper LinkedIn (`owner OR founder OR president` + company + city) → find-named-person HTTP if `FIND_NAMED_PERSON_URL` is set.
 5. Every person gets a **confidence band + 0–1 score**. Registered agents are never waterfall-ready.
 
-Prefer **Serper over Apify**. Never paid Store datasets. `APIFY_MAX_USD` is a hard cap. Live probes: **≤5 companies**, `APIFY_MAX_USD=2`.
+Prefer **Serper over Apify**. Never paid Store datasets. `APIFY_MAX_USD` is a hard cap (shared file-backed spend, billed `usageTotalUsd` per run). Per-company Apify ceiling: `APIFY_USD_PER_COMPANY` (default **$0.02**). Direct SOS HTTP first (≤15s); Apify only on 403 / captcha / Incapsula — not on not-found or timeout. TX Comptroller is free HTTP. Live probes: **≤5 companies**, `APIFY_MAX_USD=2`.
 
 ## Skip (agent-only, later phase)
 
@@ -46,11 +46,11 @@ npx tsc -p tsconfig.json --noEmit && npm test
 npm start   # :8080  /health  /mcp
 ```
 
-CSV probe:
+CSV probe (appends each row as it finishes; re-runs skip ids already in `--out`):
 
 ```bash
 export SERPER_API_KEY=... APIFY_TOKEN=... APIFY_MAX_USD=2
-npx tsx scripts/owner_lookup_sample.ts --in companies.csv --out results.csv
+npx tsx scripts/owner_lookup_sample.ts --in companies.csv --out results.csv --concurrency 5 --max-seconds 1200
 ```
 
 CA hybrid smoke (≤5 companies):

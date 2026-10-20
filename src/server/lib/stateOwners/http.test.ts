@@ -7,8 +7,10 @@ import {
   apifyProxyPasswordEnvName,
   formatMaProxyAttemptLog,
   hasCaptchaOrTurnstile,
+  isApifyWorthyBlock,
   isChallengePage,
   isPlainHttpBlock,
+  isTimeoutError,
   looksBlocked,
   residentialProxyUrl,
   shouldRetryMaViaProxy,
@@ -35,6 +37,20 @@ describe('challenge pages never count as SOS matches', () => {
       '<title>Just a moment...</title><span>Enable JavaScript and cookies to continue</span> Officer Director';
     assert.equal(isChallengePage(html), true);
     assert.equal(looksBlocked(200, html), true);
+  });
+});
+
+describe('Apify-worthy SOS blocks', () => {
+  it('treats 403, captcha, and Incapsula as worthy and skips not-found / timeout', () => {
+    assert.equal(isApifyWorthyBlock(403, 'Forbidden'), true);
+    assert.equal(isApifyWorthyBlock(200, '_Incapsula_Resource incident id 9'), true);
+    assert.equal(isApifyWorthyBlock(200, 'please complete the captcha'), true);
+    assert.equal(isApifyWorthyBlock(200, '<html><body>No records found</body></html>'), false);
+    assert.equal(isApifyWorthyBlock(404, 'not found'), false);
+    const timeout = new Error('aborted');
+    timeout.name = 'TimeoutError';
+    assert.equal(isTimeoutError(timeout), true);
+    assert.equal(isApifyWorthyBlock(0, ''), false);
   });
 });
 

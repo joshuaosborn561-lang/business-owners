@@ -1,8 +1,19 @@
 import { getBoardFetch, type FetchLike } from '../http.js';
 import type { NameLookupInput } from './types.js';
-import { ApifySpendTracker, SerperCreditTracker, apifyMaxUsdFromEnv } from './spend.js';
+import {
+  ApifySpendTracker,
+  SerperCreditTracker,
+  apifyMaxUsdFromEnv,
+  apifySpendFileFromEnv,
+  apifyUsdPerCompanyFromEnv,
+} from './spend.js';
 import type { IlDtaIndex } from './ilDta.js';
 import type { SerperSearchResponse } from './types.js';
+
+/** Direct SOS HTTP must finish in this window. Never wait on a hung registry. */
+export const SOS_HTTP_TIMEOUT_MS = 15_000;
+export const LOOKUP_CONCURRENCY_DEFAULT = 5;
+export const LOOKUP_CONCURRENCY_MAX = 8;
 
 export type HtmlKind = 'search' | 'detail' | 'document';
 
@@ -41,6 +52,18 @@ export interface LookupContext {
   azDetailPayload?: unknown;
   /** Hard cap for Apify spend this context. Env: APIFY_MAX_USD. */
   apifyMaxUsd?: number | null;
+  /** Per-company Apify ceiling. Env: APIFY_USD_PER_COMPANY (default $0.02). */
+  apifyUsdPerCompany?: number;
+  /** Shared spend file so multiple processes honor one global cap. */
+  apifySpendFile?: string | null;
+  /** Current company key for the per-company budget (STATE|city|company). */
+  companyKey?: string | null;
+  /** Abort remaining SOS work after this epoch ms. */
+  deadlineAt?: number | null;
+  /** Direct SOS HTTP timeout (capped at SOS_HTTP_TIMEOUT_MS). */
+  httpTimeoutMs?: number;
+  /** Extra ms to poll a finished Apify run until usageTotalUsd lands. */
+  apifyUsageWaitMs?: number;
   /** Injected OCR (tests). Production uses tesseract.js when installed. */
   ocr?: (bytes: Uint8Array) => Promise<string>;
   /** Injected Apify HTML fetch (tests). */
@@ -106,22 +129,54 @@ export function serperKeyFromEnv(): string | null {
   return null;
 }
 
+export function lookupMaxSecondsFromEnv(): number | null {
+  const raw = process.env.LOOKUP_MAX_SECONDS?.trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export function lookupConcurrencyFromEnv(): number {
+  const raw = process.env.LOOKUP_CONCURRENCY?.trim();
+  const n = raw ? Number(raw) : LOOKUP_CONCURRENCY_DEFAULT;
+  if (!Number.isFinite(n) || n < 1) return LOOKUP_CONCURRENCY_DEFAULT;
+  return Math.max(1, Math.min(n, LOOKUP_CONCURRENCY_MAX));
+}
+
+export function lookupDeadlineExceeded(ctx?: LookupContext): boolean {
+  return Boolean(ctx?.deadlineAt && Date.now() >= ctx.deadlineAt);
+}
+
 export function defaultLookupContext(overrides: LookupContext = {}): LookupContext {
+  const persistPath = overrides.apifySpendFile ?? apifySpendFileFromEnv();
+  const capUsd = overrides.apifyMaxUsd ?? apifyMaxUsdFromEnv();
+  const companyCap = overrides.apifyUsdPerCompany ?? apifyUsdPerCompanyFromEnv();
+  const spend =
+    overrides.spend ??
+    new ApifySpendTracker({
+      capUsd,
+      persistPath,
+      companyCapUsd: companyCap,
+    });
   const ctx: LookupContext = {
     live: true,
     fetch: getBoardFetch(),
     apifyToken: apifyTokenFromEnv(),
-    apifyEnabled: overrides.apifyEnabled ?? true,
+    apifyEnabled: true,
     ilDtaDir: ilDtaDirFromEnv(),
     includeAgents: false,
-    spend: overrides.spend ?? new ApifySpendTracker(),
-    serper: overrides.serper ?? new SerperCreditTracker(),
-    serperKey: overrides.serperKey ?? serperKeyFromEnv(),
-    serperEnabled: overrides.serperEnabled ?? true,
-    apifyMaxUsd: overrides.apifyMaxUsd ?? apifyMaxUsdFromEnv(),
+    serper: new SerperCreditTracker(),
+    serperKey: serperKeyFromEnv(),
+    serperEnabled: true,
+    apifyMaxUsd: capUsd,
+    apifyUsdPerCompany: companyCap,
+    apifySpendFile: persistPath,
     ...overrides,
+    spend,
   };
   if (ctx.spend && ctx.apifyMaxUsd != null) ctx.spend.capUsd = ctx.apifyMaxUsd;
+  if (ctx.spend && ctx.apifyUsdPerCompany != null) ctx.spend.companyCapUsd = ctx.apifyUsdPerCompany;
+  if (ctx.spend && persistPath && !ctx.spend.persistPath) ctx.spend.persistPath = persistPath;
   return ctx;
 }
 

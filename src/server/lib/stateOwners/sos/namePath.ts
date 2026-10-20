@@ -15,7 +15,7 @@ import { resolveHtmlOfficerState, usesHtmlOfficerAdapter } from './htmlStates.js
 import { domainFromWebsite } from './siteFetch.js';
 import { resolveColoradoAgentOnly, resolveOhioAgentOnly } from './agentStates.js';
 import { hitsFromRoster } from './officers.js';
-import { SERPER_USD_PER_QUERY } from './spend.js';
+import { companySpendKey, SERPER_USD_PER_QUERY } from './spend.js';
 import { resolveSerperOwner, serperIsHighConfidence } from './serperOwners.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
 import { attachConfidence } from './confidence.js';
@@ -273,6 +273,7 @@ export async function resolveNameLookup(
   if (!input.domain && input.website) {
     input = { ...input, domain: domainFromWebsite(input.website) };
   }
+  ctx = { ...(ctx || {}), companyKey: companySpendKey(input) };
 
   const dba = await resolveDbaLegalName(input, ctx);
   const legalName = dba.legal_name && dba.legal_name !== company ? dba.legal_name : null;

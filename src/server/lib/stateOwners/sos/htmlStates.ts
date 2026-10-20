@@ -1,9 +1,10 @@
 import { htmlToText, sosSearchQueries } from '../names.js';
 import { isChallengePage } from '../http.js';
-import type { LookupContext } from './context.js';
-import { fetchOfficialPage } from './htmlFetch.js';
+import { lookupDeadlineExceeded, type LookupContext } from './context.js';
+import { fetchOfficialPage, type OfficialPage } from './htmlFetch.js';
 import { pickBestEntityMatch } from './match.js';
 import { hitsFromRoster, parseOfficerRoster } from './officers.js';
+import { companySpendKey } from './spend.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
 import {
   AGENT_ONLY_SKIP_CODES,
@@ -199,90 +200,69 @@ function pickFromLinks(input: NameLookupInput, links: SearchHit[], query: string
   return best;
 }
 
-export async function resolveHtmlOfficerState(
+async function officersFromSearchPage(
   input: NameLookupInput,
-  state: HtmlOfficerState,
-  ctx?: LookupContext,
-): Promise<NameLookupResult> {
-  if (state === 'AZ') return resolveArizona(input, ctx);
+  state: string,
+  ctx: LookupContext | undefined,
+  search: OfficialPage,
+  url: string,
+  base: string,
+  query: string,
+): Promise<{ hit: NameLookupResult | null; viaApify: boolean; usd: number }> {
+  let viaApify = search.via_apify;
+  let usd = search.usd;
+  if (search.timed_out || search.blocked || isChallengePage(search.body) || !search.body) {
+    return { hit: null, viaApify, usd };
+  }
+  const links = parseSearchResultLinks(search.body, base);
+  const picked = pickFromLinks(input, links, query);
+  if (!picked) return { hit: null, viaApify, usd };
 
-  const entry = catalogByCode().get(state);
-  const sourceUrl = entry?.search_url || searchUrlFor(state, input.company_name).url;
-  const queries = sosSearchQueries(input.company_name);
-  let viaApify = false;
-  let usd = 0;
-  let lastBlockedUrl: string | null = null;
-
-  for (const query of queries) {
-    const attempts = searchAttempts(state, query);
-    for (const { url, base } of attempts) {
-      const search = await fetchOfficialPage(url, ctx, {
-        state,
-        allowApify: true,
-        input,
-        kind: 'search',
-      });
-      viaApify = viaApify || search.via_apify;
-      usd += search.usd;
-      if (search.blocked || isChallengePage(search.body)) {
-        lastBlockedUrl = sourceUrl;
-        break;
-      }
-      if (!search.body) continue;
-
-      const links = parseSearchResultLinks(search.body, base);
-      const picked = pickFromLinks(input, links, query);
-      if (!picked) continue;
-
-      let detailBody = search.body;
-      let detailUrl = search.url;
-      if (picked.item.url && picked.item.url !== url) {
-        const detail = await fetchOfficialPage(picked.item.url, ctx, {
-          state,
-          allowApify: true,
-          input,
-          kind: 'detail',
-        });
-        viaApify = viaApify || detail.via_apify;
-        usd += detail.usd;
-        if (detail.blocked || isChallengePage(detail.body)) {
-          return blockedResult(picked.item.url, {
-            via_apify: viaApify,
-            apify_usd: usd,
-            match_method: picked.method,
-            match_score: picked.score,
-            business_name: picked.item.name,
-          });
-        }
-        if (detail.body) {
-          detailBody = detail.body;
-          detailUrl = detail.url;
-        }
-      }
-      if (isChallengePage(detailBody)) {
-        return blockedResult(detailUrl, { via_apify: viaApify, apify_usd: usd, business_name: picked.item.name });
-      }
-      const entries = parseOfficerRoster(detailBody);
-      const people = hitsFromRoster(input, entries, 'us_sos', detailUrl, picked.method, {
-        cityMatch: Boolean(input.city && picked.item.city && input.city.toLowerCase() === String(picked.item.city).toLowerCase()),
-      });
-      if (!people.length) {
-        return {
-          people: [],
-          coverage_reason: 'agent_only',
-          source: 'us_sos',
-          source_url: detailUrl,
-          implemented: true,
+  let detailBody = search.body;
+  let detailUrl = search.url;
+  if (picked.item.url && picked.item.url !== url) {
+    const detail = await fetchOfficialPage(picked.item.url, ctx, {
+      state,
+      allowApify: true,
+      input,
+      kind: 'detail',
+    });
+    viaApify = viaApify || detail.via_apify;
+    usd += detail.usd;
+    if (detail.blocked || isChallengePage(detail.body)) {
+      return {
+        hit: blockedResult(picked.item.url, {
+          via_apify: viaApify,
+          apify_usd: usd,
           match_method: picked.method,
           match_score: picked.score,
           business_name: picked.item.name,
-          via_apify: viaApify,
-          apify_usd: usd,
-        };
-      }
-      return {
-        people,
-        coverage_reason: null,
+        }),
+        viaApify,
+        usd,
+      };
+    }
+    if (detail.body) {
+      detailBody = detail.body;
+      detailUrl = detail.url;
+    }
+  }
+  if (isChallengePage(detailBody)) {
+    return {
+      hit: blockedResult(detailUrl, { via_apify: viaApify, apify_usd: usd, business_name: picked.item.name }),
+      viaApify,
+      usd,
+    };
+  }
+  const entries = parseOfficerRoster(detailBody);
+  const people = hitsFromRoster(input, entries, 'us_sos', detailUrl, picked.method, {
+    cityMatch: Boolean(input.city && picked.item.city && input.city.toLowerCase() === String(picked.item.city).toLowerCase()),
+  });
+  if (!people.length) {
+    return {
+      hit: {
+        people: [],
+        coverage_reason: 'agent_only',
         source: 'us_sos',
         source_url: detailUrl,
         implemented: true,
@@ -291,14 +271,94 @@ export async function resolveHtmlOfficerState(
         business_name: picked.item.name,
         via_apify: viaApify,
         apify_usd: usd,
-      };
+      },
+      viaApify,
+      usd,
+    };
+  }
+  return {
+    hit: {
+      people,
+      coverage_reason: null,
+      source: 'us_sos',
+      source_url: detailUrl,
+      implemented: true,
+      match_method: picked.method,
+      match_score: picked.score,
+      business_name: picked.item.name,
+      via_apify: viaApify,
+      apify_usd: usd,
+    },
+    viaApify,
+    usd,
+  };
+}
+
+export async function resolveHtmlOfficerState(
+  input: NameLookupInput,
+  state: HtmlOfficerState,
+  ctx?: LookupContext,
+): Promise<NameLookupResult> {
+  if (state === 'AZ') return resolveArizona(input, ctx);
+  if (ctx) ctx.companyKey = ctx.companyKey || companySpendKey(input);
+
+  const entry = catalogByCode().get(state);
+  const sourceUrl = entry?.search_url || searchUrlFor(state, input.company_name).url;
+  const queries = sosSearchQueries(input.company_name);
+  let viaApify = false;
+  let usd = 0;
+  let apifyWorthyUrl: { url: string; base: string; query: string } | null = null;
+
+  for (const query of queries) {
+    if (lookupDeadlineExceeded(ctx)) break;
+    const attempts = searchAttempts(state, query);
+    for (const { url, base } of attempts) {
+      if (lookupDeadlineExceeded(ctx)) break;
+      const search = await fetchOfficialPage(url, ctx, {
+        state,
+        allowApify: false,
+        input,
+        kind: 'search',
+      });
+      viaApify = viaApify || search.via_apify;
+      usd += search.usd;
+      if (search.apify_worthy && !apifyWorthyUrl) apifyWorthyUrl = { url, base, query };
+      const parsed = await officersFromSearchPage(input, state, ctx, search, url, base, query);
+      viaApify = viaApify || parsed.viaApify;
+      usd = Number((usd + (parsed.usd - search.usd)).toFixed(4));
+      if (parsed.hit) {
+        return { ...parsed.hit, via_apify: viaApify, apify_usd: usd };
+      }
     }
-    if (lastBlockedUrl) break;
   }
 
-  if (lastBlockedUrl) {
-    return blockedResult(lastBlockedUrl, { via_apify: viaApify, apify_usd: usd });
+  // One residential fetch only after a real WAF block — never on not-found / timeout.
+  if (apifyWorthyUrl && !lookupDeadlineExceeded(ctx)) {
+    const search = await fetchOfficialPage(apifyWorthyUrl.url, ctx, {
+      state,
+      allowApify: true,
+      input,
+      kind: 'search',
+    });
+    viaApify = viaApify || search.via_apify;
+    usd += search.usd;
+    const parsed = await officersFromSearchPage(
+      input,
+      state,
+      ctx,
+      search,
+      apifyWorthyUrl.url,
+      apifyWorthyUrl.base,
+      apifyWorthyUrl.query,
+    );
+    viaApify = viaApify || parsed.viaApify;
+    usd = Number((usd + (parsed.usd - search.usd)).toFixed(4));
+    if (parsed.hit) return { ...parsed.hit, via_apify: viaApify, apify_usd: usd };
+    if (search.blocked || search.apify_worthy) {
+      return blockedResult(sourceUrl, { via_apify: viaApify, apify_usd: usd });
+    }
   }
+
   return {
     people: [],
     coverage_reason: 'not_found',

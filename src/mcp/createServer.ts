@@ -35,6 +35,7 @@ export function healthPayload() {
     serper_configured: Boolean(config.serperApiKey || serperKeyFromEnv()),
     apify_configured: Boolean(config.apifyToken || apifyTokenFromEnv()),
     apify_max_usd: config.apifyMaxUsd,
+    apify_usd_per_company: config.apifyUsdPerCompany,
     apify_residential_proxy_configured: apifyResidentialProxyConfigured(),
     find_named_person_configured: Boolean(config.findNamedPersonUrl),
     writes_enabled: config.writesEnabled,

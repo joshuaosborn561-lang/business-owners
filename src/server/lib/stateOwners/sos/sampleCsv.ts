@@ -1,12 +1,34 @@
-import { createReadStream } from 'node:fs';
+import { appendFile, createReadStream } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
+import { promisify } from 'node:util';
 import { normalizeState } from '../names.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
 import { domainFromWebsite } from './siteFetch.js';
+import { companySpendKey } from './spend.js';
 import { isWaterfallReady } from './waterfall.js';
+
+const appendFileAsync = promisify(appendFile);
+
+export function sampleRowId(row: {
+  id?: string | null;
+  state?: string | null;
+  city?: string | null;
+  company?: string | null;
+  company_name?: string | null;
+}): string {
+  if (row.id?.trim()) return row.id.trim();
+  return companySpendKey({
+    state: row.state,
+    city: row.city,
+    company_name: row.company_name || row.company,
+  });
+}
 
 export interface SampleRow extends NameLookupInput {
   company: string;
+  id?: string;
 }
 
 export function parseCsvLine(line: string): string[] {
@@ -60,6 +82,7 @@ export async function readCompanyCsv(path: string): Promise<SampleRow[]> {
     if (!company || !state) continue;
     const website = get('website', 'url', 'website_url', 'site', 'homepage', 'web') || null;
     const domain = get('domain') || domainFromWebsite(website) || null;
+    const id = get('id', 'row_id', 'key') || undefined;
     rows.push({
       company,
       company_name: company,
@@ -67,12 +90,14 @@ export async function readCompanyCsv(path: string): Promise<SampleRow[]> {
       state,
       website,
       domain,
+      ...(id ? { id } : {}),
     });
   }
   return rows;
 }
 
 export interface SampleResultLine {
+  id: string;
   company: string;
   city: string;
   state: string;
@@ -100,6 +125,7 @@ export interface SampleResultLine {
 export function resultToCsvRow(input: NameLookupInput, result: NameLookupResult): SampleResultLine {
   const officer = result.people.find((p) => isWaterfallReady(p));
   return {
+    id: sampleRowId(input),
     company: input.company_name,
     city: input.city || '',
     state: normalizeState(input.state),
@@ -126,6 +152,7 @@ export function resultToCsvRow(input: NameLookupInput, result: NameLookupResult)
 }
 
 export const SAMPLE_CSV_HEADERS = [
+  'id',
   'company',
   'city',
   'state',
@@ -153,9 +180,83 @@ export const SAMPLE_CSV_HEADERS = [
 export function formatSampleCsv(rows: SampleResultLine[]): string {
   const lines = [SAMPLE_CSV_HEADERS.join(',')];
   for (const row of rows) {
-    lines.push(SAMPLE_CSV_HEADERS.map((h) => csvEscape(row[h] as string | number | boolean)).join(','));
+    lines.push(formatSampleCsvLine(row));
   }
   return lines.join('\n') + '\n';
+}
+
+export function formatSampleCsvLine(row: SampleResultLine): string {
+  return SAMPLE_CSV_HEADERS.map((h) => csvEscape(row[h] as string | number | boolean)).join(',');
+}
+
+export function formatSampleJsonl(row: SampleResultLine): string {
+  return JSON.stringify(row);
+}
+
+function isJsonlPath(path: string): boolean {
+  return /\.jsonl$/i.test(path);
+}
+
+export async function readCompletedSampleIds(path: string): Promise<Set<string>> {
+  const done = new Set<string>();
+  if (!path || !existsSync(path)) return done;
+  const rl = createInterface({ input: createReadStream(path, 'utf8'), crlfDelay: Infinity });
+  let headers: string[] | null = null;
+  const jsonl = isJsonlPath(path);
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    if (jsonl) {
+      try {
+        const rec = JSON.parse(line) as SampleResultLine;
+        const id = rec.id || sampleRowId(rec);
+        if (id && id !== '|') done.add(id);
+      } catch {
+        /* skip */
+      }
+      continue;
+    }
+    const cells = parseCsvLine(line);
+    if (!headers) {
+      headers = cells.map((h) => h.toLowerCase().replace(/\s+/g, '_'));
+      continue;
+    }
+    const get = (name: string) => {
+      const idx = headers!.indexOf(name);
+      return idx >= 0 ? cells[idx] || '' : '';
+    };
+    const id = get('id') || sampleRowId({ company: get('company'), city: get('city'), state: get('state') });
+    if (id && id !== '|') done.add(id);
+  }
+  return done;
+}
+
+export function ensureSampleOutput(path: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  if (existsSync(path)) return;
+  if (isJsonlPath(path)) {
+    writeFileSync(path, '', 'utf8');
+    return;
+  }
+  writeFileSync(path, SAMPLE_CSV_HEADERS.join(',') + '\n', 'utf8');
+}
+
+export function createSampleResultSink(path: string): {
+  path: string;
+  jsonl: boolean;
+  write: (row: SampleResultLine) => Promise<void>;
+} {
+  ensureSampleOutput(path);
+  const jsonl = isJsonlPath(path);
+  let queue = Promise.resolve();
+  return {
+    path,
+    jsonl,
+    write(row: SampleResultLine) {
+      const line = (jsonl ? formatSampleJsonl(row) : formatSampleCsvLine(row)) + '\n';
+      queue = queue.then(() => appendFileAsync(path, line, 'utf8'));
+      return queue;
+    },
+  };
 }
 
 export interface SampleSummary {

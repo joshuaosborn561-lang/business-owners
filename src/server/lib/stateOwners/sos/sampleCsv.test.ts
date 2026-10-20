@@ -60,7 +60,46 @@ describe('owner_lookup_sample helpers', () => {
       coverage_reason: null,
     })));
     const csv = formatSampleCsv(lines);
-    assert.match(csv, /^company,city,state,/);
+    assert.match(csv, /^id,company,city,state,/);
+  });
+
+  it('appends results as they complete and skips ids already on disk', async () => {
+    const { writeFileSync, mkdtempSync, readFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { createSampleResultSink, readCompletedSampleIds, resultToCsvRow, sampleRowId } = await import('./sampleCsv.js');
+    const dir = mkdtempSync(join(tmpdir(), 'owners-resume-'));
+    const path = join(dir, 'out.csv');
+    const sink = createSampleResultSink(path);
+    const row = {
+      company_name: 'Sample Builders LLC',
+      company: 'Sample Builders LLC',
+      city: 'Austin',
+      state: 'TX',
+    };
+    await sink.write(
+      resultToCsvRow(row, {
+        people: [],
+        coverage_reason: 'not_found',
+        source: 'us_sos',
+        implemented: true,
+      }),
+    );
+    const done = await readCompletedSampleIds(path);
+    assert.equal(done.has(sampleRowId(row)), true);
+    assert.match(readFileSync(path, 'utf8'), /^id,company,city,state,/);
+    const jsonlPath = join(dir, 'out.jsonl');
+    const jsonl = createSampleResultSink(jsonlPath);
+    await jsonl.write(
+      resultToCsvRow(row, {
+        people: [],
+        coverage_reason: 'not_found',
+        source: 'us_sos',
+        implemented: true,
+      }),
+    );
+    const jsonlDone = await readCompletedSampleIds(jsonlPath);
+    assert.equal(jsonlDone.has(sampleRowId(row)), true);
   });
 
   it('passes a website column through to domain/origin', async () => {

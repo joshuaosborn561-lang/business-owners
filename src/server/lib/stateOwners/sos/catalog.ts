@@ -133,7 +133,7 @@ export const STATE_SOS_CATALOG: StateSosCatalogEntry[] = [
     anti_bot: 'Usually open; Apify HTML only if blocked',
     apify: 'fallback',
     implement_order: 102,
-    notes: 'Free Comptroller franchise-tax / PIR officer roster. Normalize LLC/Inc, retry DBA legal name, fuzzy-match results. Direct HTTP first; apify/web-fetch + residential only if blocked. Never paid bulk.',
+    notes: 'Free Comptroller franchise-tax / PIR officer roster via direct HTTP (15s timeout). Normalize LLC/Inc, retry DBA legal name, fuzzy-match results. Apify only on 403/captcha/Incapsula within the per-company budget — never on not-found or timeout. Never paid bulk.',
   }),
   row({
     code: 'MA',

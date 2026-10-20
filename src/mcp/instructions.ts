@@ -24,7 +24,8 @@ Do not spend SOS budget on: CO, OH, NY, WI, IA, ND, SD, KS, ID, ME, MD, NJ, IN, 
 - \`get_business_owner_job\` — poll. Counts only.
 
 ## Hard rules
-- Prefer Serper over Apify. \`APIFY_MAX_USD\` is a hard cap. Refused Apify runs are $0.
+- Prefer Serper over Apify. \`APIFY_MAX_USD\` is a hard cap (shared across the batch). Per-company ceiling \`APIFY_USD_PER_COMPANY\` (default $0.02). Spend is billed \`usageTotalUsd\` from each Apify run.
+- Direct SOS HTTP first (≤15s). Apify only after 403 / captcha / Incapsula — never on not-found or timeout. TX Comptroller is HTTP-only unless blocked.
 - A blocked/challenge page is never a match.
 - Registered agent ≠ owner.
 - No permit/license-board path. No CSLB / TDLR / L&I.

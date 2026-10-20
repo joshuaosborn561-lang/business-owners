@@ -295,3 +295,29 @@ export function looksBlocked(status: number, body: string): boolean {
   }
   return false;
 }
+
+export function isTimeoutError(err: unknown): boolean {
+  if (!err) return false;
+  const name = err instanceof Error ? err.name : '';
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    name === 'TimeoutError' ||
+    name === 'AbortError' ||
+    name === 'TimeoutAbortError' ||
+    /aborted|timeout|timed out/i.test(msg)
+  );
+}
+
+/**
+ * Apify is only for a real WAF/bot wall. Timeouts, empty 200s, and "no records"
+ * are not worth a residential fetch.
+ */
+export function isApifyWorthyBlock(status: number, body: string): boolean {
+  if (status === 403 || status === 401) return true;
+  const text = body || '';
+  if (!text.trim() && (status === 403 || status === 401)) return true;
+  if (hasCaptchaOrTurnstile(text)) return true;
+  if (incapsulaDetected(text)) return true;
+  if (isChallengePage(text)) return true;
+  return false;
+}

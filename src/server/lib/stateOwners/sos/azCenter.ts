@@ -1,7 +1,7 @@
-import { DESKTOP_UA, isChallengePage, looksBlocked } from '../http.js';
+import { DESKTOP_UA, isApifyWorthyBlock, isChallengePage, isTimeoutError, looksBlocked } from '../http.js';
 import { htmlToText } from '../names.js';
 import type { LookupContext } from './context.js';
-import { ctxFetch, fixtureHtml } from './context.js';
+import { SOS_HTTP_TIMEOUT_MS, ctxFetch, fixtureHtml, lookupDeadlineExceeded } from './context.js';
 import { apifyFetchHtml } from './apifyPlaywright.js';
 import { pickBestEntityMatch } from './match.js';
 import { hitsFromRoster, parseOfficerRoster, type RosterEntry } from './officers.js';
@@ -151,18 +151,30 @@ export function azSearchPageFunction(searchTerm: string): string {
 async function fetchAzJson(
   url: string,
   ctx: LookupContext | undefined,
-): Promise<{ status: number; payload: unknown; blocked: boolean; body: string }> {
-  const res = await ctxFetch(ctx)(url, {
-    headers: {
-      'User-Agent': DESKTOP_UA,
-      Accept: 'application/json',
-      Origin: 'https://arizonabusinesscenter.azcc.gov',
-      Referer: `${AZ_SEARCH_UI}/`,
-    },
-  });
-  const body = await res.text();
-  const blocked = looksBlocked(res.status, body) || isChallengePage(body) || res.status === 401;
-  return { status: res.status, payload: blocked ? null : parseMaybeJson(body), blocked, body };
+): Promise<{ status: number; payload: unknown; blocked: boolean; body: string; timed_out?: boolean }> {
+  const timeoutMs = Math.min(SOS_HTTP_TIMEOUT_MS, ctx?.httpTimeoutMs ?? SOS_HTTP_TIMEOUT_MS);
+  try {
+    const res = await ctxFetch(ctx)(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        'User-Agent': DESKTOP_UA,
+        Accept: 'application/json',
+        Origin: 'https://arizonabusinesscenter.azcc.gov',
+        Referer: `${AZ_SEARCH_UI}/`,
+      },
+    });
+    const body = await res.text();
+    const blocked = looksBlocked(res.status, body) || isChallengePage(body) || res.status === 401;
+    return { status: res.status, payload: blocked ? null : parseMaybeJson(body), blocked, body };
+  } catch (err) {
+    return {
+      status: 0,
+      payload: null,
+      blocked: false,
+      body: '',
+      timed_out: isTimeoutError(err) || lookupDeadlineExceeded(ctx),
+    };
+  }
 }
 
 export async function searchAzBusinessCenter(
@@ -186,19 +198,19 @@ export async function searchAzBusinessCenter(
   const q = encodeURIComponent(input.company_name.trim());
   const directUrl =
     `${AZ_PUBLIC_SEARCH}?pageNumber=1&pageSize=25&searchType=businessname&searchValue=${q}&isInhouse=true&searchMethod=7`;
-  try {
-    const got = await fetchAzJson(directUrl, ctx);
-    if (!got.blocked && got.payload != null) {
-      const entities = parseAzSearchPayload(got.payload);
-      if (entities.length) {
-        return { entities, blocked: false, via_apify: false, usd: 0, source_url };
-      }
+  const got = await fetchAzJson(directUrl, ctx);
+  if (!got.blocked && got.payload != null) {
+    const entities = parseAzSearchPayload(got.payload);
+    if (entities.length) {
+      return { entities, blocked: false, via_apify: false, usd: 0, source_url };
     }
-  } catch {
-    /* browser fallback */
+    return { entities: [], blocked: false, via_apify: false, usd: 0, source_url };
+  }
+  if (got.timed_out || !isApifyWorthyBlock(got.status, got.body || '')) {
+    return { entities: [], blocked: got.blocked, via_apify: false, usd: 0, source_url };
   }
 
-  if (ctx.apifyEnabled === false) {
+  if (ctx.apifyEnabled === false || lookupDeadlineExceeded(ctx)) {
     return { entities: [], blocked: true, via_apify: false, usd: 0, source_url };
   }
   const apify = await apifyFetchHtml(AZ_SEARCH_UI, ctx, {

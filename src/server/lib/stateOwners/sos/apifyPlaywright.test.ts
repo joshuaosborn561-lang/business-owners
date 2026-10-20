@@ -111,29 +111,36 @@ describe('Apify policy', () => {
     assert.ok(spend.usd > 0);
   });
 
-  it('does not apply the per-lookup estimate to a failed run with no usage', async () => {
+  it('charges usageTotalUsd from a failed run instead of counting $0', async () => {
     const spend = new ApifySpendTracker();
     const fetchFn: typeof fetch = async (input, init) => {
       const url = String(input);
       if (url.includes('/acts/') && init?.method === 'POST') {
-        return new Response(JSON.stringify({ data: { id: 'run-fail', status: 'FAILED' } }), {
-          headers: { 'content-type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({
+            data: { id: 'run-fail', status: 'FAILED', usageTotalUsd: 0.041 },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        );
       }
       if (url.includes('/actor-runs/run-fail')) {
-        return new Response(JSON.stringify({ data: { id: 'run-fail', status: 'FAILED' } }), {
-          headers: { 'content-type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({
+            data: { id: 'run-fail', status: 'FAILED', usageTotalUsd: 0.041 },
+          }),
+          { headers: { 'content-type': 'application/json' } },
+        );
       }
       return new Response('[]', { headers: { 'content-type': 'application/json' } });
     };
     const got = await apifyFetchHtml(
       'https://example.test/x',
-      { live: true, apifyToken: 'token', spend, fetch: fetchFn },
+      { live: true, apifyToken: 'token', spend, fetch: fetchFn, apifyUsageWaitMs: 0 },
       { immediate: true },
     );
-    assert.equal(got.usd, 0);
-    assert.equal(spend.usd, 0);
+    assert.equal(got.usd, 0.041);
+    assert.equal(spend.usd, 0.041);
+    assert.equal(spend.runs, 1);
   });
 
   it('tries apify/web-fetch before playwright when preferWebFetch is set', async () => {

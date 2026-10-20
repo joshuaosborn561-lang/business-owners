@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it } from 'node:test';
+import {
+  APIFY_USD_PER_BLOCKED_LOOKUP,
+  APIFY_USD_PER_COMPANY,
+  ApifySpendTracker,
+  companySpendKey,
+  usdFromApifyRun,
+} from './spend.js';
+
+describe('usdFromApifyRun', () => {
+  it('uses the run billed usageTotalUsd even when the actor failed', () => {
+    const cost = usdFromApifyRun(
+      { id: 'run-1', status: 'FAILED', usageTotalUsd: 0.047 },
+      { succeeded: false, started: true },
+    );
+    assert.equal(cost.usd, 0.047);
+  });
+
+  it('charges a started run with no usage yet instead of counting $0', () => {
+    const cost = usdFromApifyRun({ id: 'run-2', status: 'FAILED' }, { succeeded: false, started: true });
+    assert.equal(cost.usd, APIFY_USD_PER_BLOCKED_LOOKUP);
+  });
+
+  it('does not invent spend when the actor never started', () => {
+    const cost = usdFromApifyRun({ status: 'FAILED' }, { succeeded: false, started: false });
+    assert.equal(cost.usd, 0);
+  });
+});
+
+describe('ApifySpendTracker shared cap', () => {
+  it('persists billed spend so a second process sees the same global cap', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'owners-spend-'));
+    const path = join(dir, 'spend.json');
+    const a = new ApifySpendTracker({ persistPath: path, capUsd: 0.04, companyCapUsd: APIFY_USD_PER_COMPANY });
+    a.add(0.03);
+    const b = new ApifySpendTracker({ persistPath: path, capUsd: 0.04, companyCapUsd: APIFY_USD_PER_COMPANY });
+    assert.equal(b.usd, 0.03);
+    assert.equal(b.wouldExceed(0.015), true);
+    assert.equal(b.reserve(0.015), false);
+    const disk = JSON.parse(readFileSync(path, 'utf8')) as { usd: number };
+    assert.equal(disk.usd, 0.03);
+  });
+
+  it('enforces a per-company ceiling on reserve', () => {
+    const spend = new ApifySpendTracker({ capUsd: 2, companyCapUsd: 0.02 });
+    const key = companySpendKey({ state: 'TX', city: 'Austin', company_name: 'Sample Builders LLC' });
+    assert.equal(spend.reserve(0.015, key), true);
+    assert.equal(spend.reserve(0.015, key), true);
+    assert.equal(spend.reserve(0.015, key), false);
+    assert.equal(spend.remainingCompanyUsd(key), 0);
+    assert.equal(spend.reserve(0.015, companySpendKey({ state: 'GA', city: 'Atlanta', company_name: 'Other LLC' })), true);
+  });
+
+  it('settles a reservation to the actual billed usageTotalUsd', () => {
+    const spend = new ApifySpendTracker({ capUsd: 2 });
+    assert.equal(spend.reserve(0.015), true);
+    spend.commit(0.047, 0.015);
+    assert.equal(spend.usd, 0.047);
+    assert.equal(spend.runs, 1);
+  });
+});

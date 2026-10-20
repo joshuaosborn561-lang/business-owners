@@ -112,7 +112,7 @@ describe('HTML registry adapters', () => {
           }),
         apifyFetchHtml: async (url) => ({
           html: /BusinessInformation/i.test(url) ? html('ga-detail.html') : html('ga-search.html'),
-          usd: 0.015,
+          usd: 0.008,
         }),
       },
     );
@@ -253,6 +253,96 @@ describe('HTML registry adapters', () => {
     );
     assert.equal(result.people[0]?.title, 'President');
     assert.equal(result.people[0]?.first_name, 'JANE');
+  });
+
+  it('resolves TX Comptroller officers over direct HTTP without Apify', async () => {
+    let apify = 0;
+    const result = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Austin', state: 'TX' },
+      'TX',
+      {
+        live: true,
+        fetch: async (input) => {
+          const url = String(input);
+          const body = /coaGetPq|detail|t_coa_id/i.test(url) ? html('tx-coa-officers.html') : html('tx-search.html');
+          return new Response(body, { status: 200, headers: { 'content-type': 'text/html' } });
+        },
+        apifyFetchHtml: async () => {
+          apify += 1;
+          return { html: html('tx-coa-officers.html'), usd: 0.015 };
+        },
+      },
+    );
+    assert.equal(apify, 0);
+    assert.equal(result.via_apify, false);
+    assert.equal(result.coverage_reason, null);
+    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE' && p.first_name === 'JANE'));
+  });
+
+  it('does not send TX not-found or timed-out HTTP to Apify', async () => {
+    let apify = 0;
+    const missed = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Austin', state: 'TX' },
+      'TX',
+      {
+        live: true,
+        fetch: async () => new Response('<html><body>No records found</body></html>', { status: 200 }),
+        apifyFetchHtml: async () => {
+          apify += 1;
+          return { html: html('tx-search.html'), usd: 0.015 };
+        },
+      },
+    );
+    assert.equal(apify, 0);
+    assert.equal(missed.coverage_reason, 'not_found');
+    assert.equal(missed.via_apify, false);
+
+    const timed = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Austin', state: 'TX' },
+      'TX',
+      {
+        live: true,
+        fetch: async () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          throw err;
+        },
+        apifyFetchHtml: async () => {
+          apify += 1;
+          return { html: html('tx-search.html'), usd: 0.015 };
+        },
+      },
+    );
+    assert.equal(apify, 0);
+    assert.equal(timed.via_apify, false);
+    assert.equal(timed.coverage_reason, 'not_found');
+  });
+
+  it('uses one Apify fallback for a WAF block, not one per TX search URL', async () => {
+    let http = 0;
+    let apify = 0;
+    const result = await resolveHtmlOfficerState(
+      { company_name: 'Sample Builders LLC', city: 'Austin', state: 'TX' },
+      'TX',
+      {
+        live: true,
+        fetch: async () => {
+          http += 1;
+          return new Response('<html>_Incapsula_Resource</html>', { status: 403 });
+        },
+        apifyFetchHtml: async (url) => {
+          apify += 1;
+          return {
+            html: /coaGetPq|detail|t_coa_id/i.test(url) ? html('tx-coa-officers.html') : html('tx-search.html'),
+            usd: 0.008,
+          };
+        },
+      },
+    );
+    assert.ok(http >= 3, `expected every TX HTTP variant first, got ${http}`);
+    assert.ok(apify >= 1 && apify <= 2, `expected one search Apify (optional detail), got ${apify}`);
+    assert.equal(result.via_apify, true);
+    assert.ok(result.people.some((p) => p.last_name === 'SAMPLE'));
   });
 
   it('uses the generic HTML adapter for other officer-publishing states', async () => {

@@ -60,7 +60,7 @@ Wire these as SOS adapters (direct HTTP first, Apify HTML fallback only after Se
 | Code | Source | Why B |
 |------|--------|-------|
 | **FL** | Sunbiz HTML (reuse later; public SFTP has officers) | High volume, officers on record. Serper snippets: drop dates/labels, LAST FIRST → First Last. |
-| **TX** | Comptroller PIR (free HTML in this PR) | Officers on franchise search; do not pay SOSDirect |
+| **TX** | Comptroller PIR (free HTML in this PR) | Officers on franchise search via direct HTTP; Apify only if 403/captcha/Incapsula. Do not pay SOSDirect |
 | **MA** | SOS corp search | Officers; Imperva — residential only if blocked |
 | **PA** | DOS business search | Officers; do not enable HIC/Turnstile |
 | **CT** | data.ct.gov master + principals | Open data join |
