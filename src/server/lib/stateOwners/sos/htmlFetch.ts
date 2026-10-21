@@ -256,7 +256,14 @@ export async function fetchOfficialPage(
     };
   }
 
-  const got = await apifyFetchHtml(url, ctx, { preferWebFetch: true });
+  let got: Awaited<ReturnType<typeof apifyFetchHtml>>;
+  try {
+    got = await apifyFetchHtml(url, ctx, { preferWebFetch: true });
+  } catch {
+    // Network error talking to Apify: treat as blocked, never crash the batch.
+    ctx.companyKey = prevKey;
+    return { status: status || 0, body: '', url, via_apify: false, blocked: true, usd: 0, apify_worthy: false };
+  }
   ctx.companyKey = prevKey;
   if (got.refused) {
     return { status: status || 0, body: '', url, via_apify: false, blocked: true, usd: 0, apify_worthy: true };
