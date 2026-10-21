@@ -14,12 +14,13 @@ import type { NameLookupInput, SerperOrganicHit, WaterfallOwnerHit } from './typ
 import { attachConfidence } from './confidence.js';
 import { normCompany } from './unmask.js';
 
-export type HardTechnique = 'li_title' | 'aggregator';
+export type HardTechnique = 'li_title' | 'aggregator' | 'gbp_reply';
 const OWNER_TITLE = /\b(owner|co-owner|founder|co-founder|president|ceo|principal|proprietor|managing member)\b/i;
 const OWNER_CLAUSE = '("Owner" OR "Founder" OR "President" OR "CEO" OR "Principal" OR "Co-Owner")';
 
 export function hardQuery(t: HardTechnique, company: string): string {
   if (t === 'li_title') return `site:linkedin.com/in "${company}" ${OWNER_CLAUSE}`;
+  if (t === 'gbp_reply') return `"${company}" "response from the owner"`;
   return `"${company}" "owner" -site:linkedin.com -site:facebook.com`;
 }
 

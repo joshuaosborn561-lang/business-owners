@@ -147,3 +147,26 @@ Shell LLC set (25 entities with principal addresses, FL/TX/GA): 5 / 25 before un
 1. FL Sunbiz behind a residential proxy (catalog says never Apify). GA eCorp Apify fallback is not getting past the challenge.
 2. MA and IL misses (0/2, 1/4): wire MA Corporations and IL DTA bulk officers into the name path.
 3. Unmask: add a Serper organic pass on the quoted address (Bizapedia / OpenCorporates list sibling LLCs and their managers) for addresses Maps does not list. Then pass the parcel mailing address from permit-pulling when there is one.
+
+
+## Oct 21 2026 re-run (counts only)
+
+| Run | 47 sample | Officer states | Agent-only states | 25 shell LLCs |
+|---|---|---|---|---|
+| Before (first run) | 31 (66%) | 22/32 | 9/15 | 5 (20%) |
+| + hard-to-find, unmask address search, IL LLC managers, name lead-in fix | 34 (72%) | 25/32 | 9/15 | 5 (20%) |
+| + FL Sunbiz bulk files, TX/FL person-RA promotion | 36 (77%) | 27/32 | 9/15 | 16 (64%) |
+
+All 72 rows together: 36/72 (50%) before, 52/72 (72%) after.
+
+- FL Sunbiz quarterly bulk (free, sorted-file lookup, no HTTP): FL went 3/4 to 4/4 on the sample and 0/13 to 11/13 on shells.
+- Hard-to-find (LinkedIn title + plain search; surname-in-company or 2-source rule; no Facebook; franchises skipped): +2.
+- IL LLC manager files: +1 (IL 1/4 to 2/4). The rest of IL is trade names.
+- Unmask address search: 0 extra on this set. Person-RA promotion: 0 extra on this set. GBP "response from the owner": 0/36 under the strict rule, so it is off by default.
+- MA corporations search is behind Incapsula from datacenter IPs, and site: searches of the registry return nothing. Not wired. GA eCorp: site: snippets carry no officers. Still 0/4 on GA shells.
+
+### Next
+1. License boards (CSLB, FL DBPR, TX TDLR) from permit-pulling.
+2. Cross-reference RA addresses across entities.
+3. Reject an RA candidate who owns a different business in the same city.
+4. Agent-only states (OH 0/2): the Serper paths only.
