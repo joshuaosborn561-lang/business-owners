@@ -1,3 +1,4 @@
+import { resolveSodaState, SODA_STATES } from './sodaStates.js';
 import { resolveLicenseBoards } from './licenseBoards.js';
 import { flLookupProvider, resolveFloridaBulk } from './flBulk.js';
 import { resolveHardToFind } from './hardToFind.js';
@@ -230,6 +231,11 @@ async function resolveOfficialNameLookup(
   const entry = catalogByCode().get(state);
   if (!entry) {
     return emptyNameResult(input, 'no_source');
+  }
+
+  if (SODA_STATES.has(state)) {
+    const soda = await resolveSodaState(input, ctx);
+    if (soda) return soda;
   }
 
   if (isAgentOnlySkipState(state)) {

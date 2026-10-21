@@ -640,3 +640,65 @@ Cost of the free path: Serper about $0.01–0.02 per company (≤ 15 credits). A
  }
 ]
 ```
+
+## Per-state live test (2026-10-21)
+
+381 rows (Serper Places small businesses, mixed industries; 10/state for AK–NV plus OR/NY, 5/state for the rest). 194 named (51%). Spend ~$8.7 (Serper 0.001/credit + Apify). Counts only.
+
+| State | Named/rows | Rate | $/lookup | Top sources |
+|---|---|---|---|---|
+| AK | 4/10 | 40% | 0.023 | {'linkedin': 3, 'serper': 1} |
+| AL | 4/10 | 40% | 0.027 | {'linkedin': 3, 'hard_to_find': 1} |
+| AR | 4/9 | 44% | 0.016 | {'serper': 2, 'linkedin': 2} |
+| AZ | 2/10 | 20% | 0.017 | {'linkedin': 2} |
+| CA | 6/10 | 60% | 0.041 | {'linkedin': 4, 'website': 1} |
+| CO | 6/9 | 67% | 0.019 | {'us_sos': 2, 'linkedin': 2} |
+| CT | 5/10 | 50% | 0.014 | {'us_sos': 3, 'serper': 1} |
+| DC | 4/10 | 40% | 0.019 | {'website': 1, 'linkedin': 1} |
+| DE | 5/9 | 56% | 0.025 | {'hard_to_find': 2, 'linkedin': 2} |
+| FL | 3/9 | 33% | 0.023 | {'sunbiz': 2, 'linkedin': 1} |
+| GA | 5/10 | 50% | 0.010 | {'linkedin': 3, 'serper': 1} |
+| HI | 4/10 | 40% | 0.027 | {'linkedin': 3, 'serper': 1} |
+| IA | 7/9 | 78% | 0.022 | {'linkedin': 4, 'serper': 2} |
+| ID | 7/10 | 70% | 0.029 | {'linkedin': 4, 'hard_to_find': 2} |
+| IL | 5/10 | 50% | 0.019 | {'us_sos': 2, 'linkedin': 2} |
+| IN | 5/9 | 56% | 0.021 | {'website': 2, 'linkedin': 2} |
+| KS | 5/10 | 50% | 0.014 | {'linkedin': 3, 'serper': 2} |
+| KY | 9/10 | 90% | 0.034 | {'serper': 4, 'linkedin': 4} |
+| LA | 2/9 | 22% | 0.024 | {'linkedin': 2} |
+| MA | 2/7 | 29% | 0.027 | {'serper': 1, 'linkedin': 1} |
+| MD | 3/9 | 33% | 0.024 | {'linkedin': 3} |
+| ME | 5/10 | 50% | 0.024 | {'linkedin': 4, 'serper': 1} |
+| MI | 9/10 | 90% | 0.027 | {'linkedin': 4, 'serper': 2} |
+| MN | 4/9 | 44% | 0.013 | {'linkedin': 3, 'serper': 1} |
+| MO | 7/9 | 78% | 0.036 | {'linkedin': 4, 'hard_to_find': 2} |
+| MS | 5/9 | 56% | 0.019 | {'linkedin': 2, 'serper': 1} |
+| MT | 3/10 | 30% | 0.028 | {'linkedin': 2, 'serper': 1} |
+| NC | 2/5 | 40% | 0.018 | {'linkedin': 2} |
+| ND | 1/5 | 20% | 0.020 | {'website': 1} |
+| NE | 7/9 | 78% | 0.016 | {'linkedin': 5, 'serper': 2} |
+| NH | 0/1 | 0% | 0.010 | {} |
+| NJ | 2/5 | 40% | 0.011 | {'linkedin': 1, 'website': 1} |
+| NM | 3/5 | 60% | 0.033 | {'linkedin': 2, 'serper': 1} |
+| NV | 4/4 | 100% | 0.005 | {'serper': 3, 'hard_to_find': 1} |
+| NY | 4/6 | 67% | 0.021 | {'linkedin': 3, 'serper': 1} |
+| OH | 0/5 | 0% | 0.024 | {} |
+| OK | 4/5 | 80% | 0.012 | {'serper': 2, 'hard_to_find': 1} |
+| OR | 6/10 | 60% | 0.035 | {'us_sos': 4, 'serper': 1} |
+| PA | 3/5 | 60% | 0.031 | {'linkedin': 2, 'serper': 1} |
+| RI | 0/5 | 0% | 0.046 | {} |
+| SC | 3/5 | 60% | 0.020 | {'website': 1, 'serper': 1} |
+| SD | 3/5 | 60% | 0.022 | {'hard_to_find': 2, 'website': 1} |
+| TN | 4/5 | 80% | 0.036 | {'linkedin': 3, 'hard_to_find': 1} |
+| TX | 5/5 | 100% | 0.012 | {'us_sos': 4, 'website': 1} |
+| UT | 0/5 | 0% | 0.034 | {} |
+| VA | 4/5 | 80% | 0.008 | {'serper': 2, 'linkedin': 2} |
+| VT | 1/5 | 20% | 0.008 | {'linkedin': 1} |
+| WA | 2/5 | 40% | 0.034 | {'serper': 1, 'linkedin': 1} |
+| WI | 2/5 | 40% | 0.006 | {'hard_to_find': 2} |
+| WV | 3/5 | 60% | 0.011 | {'linkedin': 3} |
+| WY | 1/5 | 20% | 0.013 | {'linkedin': 1} |
+
+States at >=70%: 11 (IA, ID, KY, MI, MO, NE, NV, OK, TN, TX, VA). Samples of 5 or fewer rows are directional only.
+New: live SODA adapters (sodaStates.ts) for CT principals, OR authorized rep/RA, CO and NY agent (person-RA rule).
+Note: per-row Serper use is ~20 credits, about 4x what the Apify spend file tracks; the cap must count Serper from per-row credits.
