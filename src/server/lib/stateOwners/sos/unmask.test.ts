@@ -30,3 +30,14 @@ test('sibling entities from organic', () => {
   ]);
   assert.deepEqual(sibs, ['Acme Sitework, LLC']);
 });
+
+import { promoteAgentCandidate, isWaterfallReady } from './waterfall.js';
+test('registered agent person promotion', () => {
+  const input = { company_name: 'Doe Holdings LLC', state: 'TX', city: 'Austin' };
+  const same = promoteAgentCandidate(input, 'Jane Smith', 'us_sos', 'https://x', { agentAddress: '1 Main St', businessAddress: '1 MAIN ST.' });
+  assert.equal(same?.accepted, true);
+  assert.equal(isWaterfallReady(same!.hit), true);
+  assert.equal(promoteAgentCandidate(input, 'John Doe', 'us_sos', 'https://x')?.reason, 'surname');
+  assert.equal(promoteAgentCandidate(input, 'Jane Smith', 'us_sos', 'https://x')?.accepted, false);
+  assert.equal(promoteAgentCandidate(input, 'Registered Agents Inc', 'us_sos', 'https://x'), null);
+});

@@ -1,3 +1,4 @@
+import { flBulkDir, resolveFloridaBulk } from './flBulk.js';
 import { resolveHardToFind } from './hardToFind.js';
 import { resolveUnmaskByAddress } from './unmask.js';
 import { normalizeState } from '../names.js';
@@ -233,6 +234,11 @@ async function resolveOfficialNameLookup(
     });
   }
 
+  if (state === 'FL') {
+    const dir = flBulkDir();
+    const bulk = dir ? resolveFloridaBulk(input, dir, [input.company_name]) : null;
+    if (bulk && (bulk.people.length || bulk.coverage_reason === 'agent_only')) return bulk;
+  }
   if (state === 'CA') return resolveCalifornia(input, ctx);
   if (state === 'IL') return resolveIllinois(input, ctx);
   if (usesHtmlOfficerAdapter(state)) {
@@ -357,7 +363,11 @@ export async function resolveNameLookup(
   }
 
   if (ctx?.unmaskEnabled !== false && process.env.UNMASK_ENABLED !== 'false') {
-    const unmask = await resolveUnmaskByAddress(input, ctx, { allNames: false });
+    const unmask = await resolveUnmaskByAddress(
+      { ...input, mailing_address: input.mailing_address || official.mailing_address || null },
+      ctx,
+      { allNames: false },
+    );
     const credits = unmask.serper_credits || 0;
     if (credits) {
       official.serper_credits = (official.serper_credits || 0) + credits;

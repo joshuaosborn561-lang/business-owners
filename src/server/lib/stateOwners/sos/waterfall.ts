@@ -99,3 +99,51 @@ export function ownerConfidenceFromMatch(method: 'exact' | 'substring' | 'trigra
   if (method === 'substring') return 'medium';
   return 'high';
 }
+
+const COMMERCIAL_AGENT =
+  /\b(LLC|L\.L\.C|INC|CORP|COMPANY|SERVICES?|AGENTS?|REGISTERED|INCORPORAT|LAW|LEGAL|ATTORNEYS?|CPA|ACCOUNTING|TAX|TRUST|BANK|GROUP|PARTNERS|LLP|PLLC|P\.?C\.?|ASSOCIATES)\b/i;
+
+function normAddr(a: string | null | undefined): string {
+  return String(a || '').toUpperCase().replace(/\b(SUITE|STE|UNIT|APT|#)\b.*$/, '').replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * A registered agent who is an individual is an owner candidate on small
+ * entities. Auto-accept when the agent sits at the business's own address, or
+ * the agent's surname is in the company name. Otherwise not waterfall-ready.
+ */
+export function promoteAgentCandidate(
+  input: NameLookupInput,
+  rawName: string,
+  source: BoardSource,
+  sourceUrl: string,
+  opts: { agentAddress?: string | null; businessAddress?: string | null } = {},
+): { hit: WaterfallOwnerHit; accepted: boolean; reason: 'same_address' | 'surname' | 'candidate' } | null {
+  const cleaned = String(rawName || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned || isRegistryAgentName(cleaned) || COMMERCIAL_AGENT.test(cleaned)) return null;
+  if (!validateOfficerPersonName(cleaned).ok) return null;
+  const split = splitPersonName(cleaned);
+  if (!split.first_name || !split.last_name) return null;
+  const a = normAddr(opts.agentAddress);
+  const b = normAddr(opts.businessAddress);
+  const sameAddress = Boolean(a && b && a.length >= 6 && a === b);
+  const companyKey = String(input.company_name || '').toUpperCase().replace(/[^A-Z]/g, '');
+  const last = String(split.last_name).toUpperCase().replace(/[^A-Z]/g, '');
+  const surname = last.length >= 3 && companyKey.includes(last);
+  const accepted = sameAddress || surname;
+  const hit = attachConfidence({
+    first_name: split.first_name,
+    last_name: split.last_name,
+    title: 'Owner (registered agent)',
+    company_name: input.company_name,
+    domain: input.domain ?? null,
+    source_url: sourceUrl,
+    confidence: accepted ? 'high' : 'low',
+    state: input.state,
+    source,
+    role: accepted ? 'owner' : 'registered_agent',
+    coverage_reason: accepted ? null : 'agent_only',
+    review_flag: !accepted,
+  });
+  return { hit, accepted, reason: sameAddress ? 'same_address' : surname ? 'surname' : 'candidate' };
+}

@@ -104,6 +104,10 @@ export interface NameLookupResult {
   legal_name?: string | null;
   dba_name?: string | null;
   dba_source?: DbaSource;
+  /** Registered agent promoted to owner (same_address / surname). */
+  agent_promoted?: 'same_address' | 'surname' | 'candidate';
+  /** Entity mailing address from the registry; feeds the unmask step. */
+  mailing_address?: string | null;
 }
 
 export type BusinessOwnerJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'stopped';

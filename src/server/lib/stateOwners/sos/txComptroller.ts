@@ -1,3 +1,4 @@
+import { promoteAgentCandidate } from './waterfall.js';
 import { htmlToText, sosSearchQueries } from '../names.js';
 import type { LookupContext } from './context.js';
 import { lookupDeadlineExceeded } from './context.js';
@@ -130,6 +131,16 @@ export function officersFromTxFtasDetail(payload: string): RosterEntry[] {
   return parseOfficerRoster(htmlToText(raw) || raw);
 }
 
+function txDetailRecord(body: string | null | undefined): Record<string, unknown> | null {
+  try {
+    const json = JSON.parse(String(body || '')) as Record<string, unknown>;
+    const data = (json && typeof json.data === 'object' ? json.data : json) as Record<string, unknown>;
+    return data && typeof data === 'object' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 function emptyTx(coverage: NameLookupResult['coverage_reason'], extra?: Partial<NameLookupResult>): NameLookupResult {
   return {
     people: [],
@@ -205,8 +216,34 @@ export async function resolveTexasComptroller(
       cityMatch: Boolean(input.city && picked.item.city && input.city.toLowerCase() === String(picked.item.city).toLowerCase()),
     });
     if (!people.length) {
+      const d = txDetailRecord(detail.body);
+      const mailing = d ? [d.mailingAddressStreet, d.mailingAddressCity, d.mailingAddressState].filter(Boolean).join(', ') : null;
+      const promoted = d
+        ? promoteAgentCandidate(input, String(d.registeredAgentName || ''), 'us_sos', sourceUrl, {
+            agentAddress: String(d.registeredOfficeAddressStreet || ''),
+            businessAddress: String(d.mailingAddressStreet || ''),
+          })
+        : null;
+      if (promoted?.accepted) {
+        return {
+          people: [promoted.hit],
+          coverage_reason: null,
+          source: 'us_sos',
+          source_url: sourceUrl,
+          implemented: true,
+          match_method: picked.method,
+          match_score: picked.score,
+          business_name: picked.item.name,
+          entity_id: picked.item.taxpayerId || null,
+          via_apify: viaApify,
+          apify_usd: usd,
+          agent_promoted: promoted.reason,
+          mailing_address: mailing,
+        };
+      }
       return {
         people: [],
+        mailing_address: mailing,
         coverage_reason: 'agent_only',
         source: 'us_sos',
         source_url: sourceUrl,
