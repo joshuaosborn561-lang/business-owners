@@ -11,7 +11,8 @@ import {
 } from './caBizfile.js';
 import { fetchCaStatementOfficers } from './caSi.js';
 import type { LookupContext } from './context.js';
-import { ensureIlDtaIndex, matchIlDta, IL_DTA_HOME } from './ilDta.js';
+import { defaultIlDtaCacheDir, ensureIlDtaIndex, matchIlDta, IL_DTA_HOME } from './ilDta.js';
+import { loadIlLlcIndex, matchIlLlc } from './ilLlc.js';
 import { resolveHtmlOfficerState, usesHtmlOfficerAdapter } from './htmlStates.js';
 import { domainFromWebsite } from './siteFetch.js';
 import { resolveColoradoAgentOnly, resolveOhioAgentOnly } from './agentStates.js';
@@ -154,6 +155,24 @@ async function resolveCalifornia(input: NameLookupInput, ctx?: LookupContext): P
 }
 
 async function resolveIllinois(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult> {
+  if (ctx?.live !== false || ctx?.ilDtaDir) {
+    const llc = await loadIlLlcIndex(ctx?.ilDtaDir ?? defaultIlDtaCacheDir()).catch(() => null);
+    const hit = llc ? matchIlLlc(llc, [input.company_name], input.city) : null;
+    if (hit) {
+      const people = hitsFromRoster(input, hit.roster, 'us_sos', IL_DTA_HOME, 'exact', { cityMatch: hit.city_match });
+      if (people.length) {
+        return {
+          people,
+          coverage_reason: null,
+          source: 'us_sos',
+          source_url: IL_DTA_HOME,
+          match_method: 'exact',
+          entity_id: hit.file,
+          implemented: true,
+        };
+      }
+    }
+  }
   const index = await ensureIlDtaIndex(ctx);
   if (!index || !index.list.length) {
     return emptyNameResult(input, 'no_source', 'us_sos', {
