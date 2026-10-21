@@ -8,6 +8,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { RosterEntry } from './officers.js';
+import { lookupIlDb } from './registryDb.js';
 
 export const IL_LLC_URL = 'https://www.ilsos.gov/data/bus-serv-home.html';
 
@@ -109,6 +110,30 @@ export function matchIlLlc(
       if (person) roster.push({ name: person, title: 'Manager', role: 'member', labeled: true });
     }
     if (roster.length) return { file, roster: roster.slice(0, 4), city_match: index.city.get(file) === want };
+  }
+  return null;
+}
+
+/** Same rule as matchIlLlc, against Supabase business_owners.il_llc_*. */
+export async function matchIlLlcDb(
+  names: Array<string | null | undefined>,
+  city?: string | null,
+): Promise<{ file: string; roster: RosterEntry[]; city_match: boolean } | null> {
+  const want = String(city || '').toUpperCase().trim();
+  for (const name of names) {
+    const key = ilNormName(String(name || ''));
+    if (key.length < 3) continue;
+    const rows = (await lookupIlDb([key])) || [];
+    if (!rows.length) continue;
+    const ranked = [...rows].sort((a, b) => Number(b.city === want) - Number(a.city === want));
+    const files = new Set(rows.map((r) => r.file));
+    if (files.size > 1 && ranked[0].city !== want) continue;
+    const roster: RosterEntry[] = [];
+    for (const m of ranked[0].managers || []) {
+      const person = ilManagerPerson(m.name);
+      if (person) roster.push({ name: person, title: 'Manager', role: 'member', labeled: true });
+    }
+    if (roster.length) return { file: ranked[0].file, roster: roster.slice(0, 4), city_match: ranked[0].city === want };
   }
   return null;
 }

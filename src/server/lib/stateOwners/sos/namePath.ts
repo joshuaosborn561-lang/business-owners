@@ -1,4 +1,5 @@
-import { flBulkDir, resolveFloridaBulk } from './flBulk.js';
+import { resolveLicenseBoards } from './licenseBoards.js';
+import { flLookupProvider, resolveFloridaBulk } from './flBulk.js';
 import { resolveHardToFind } from './hardToFind.js';
 import { resolveUnmaskByAddress } from './unmask.js';
 import { normalizeState } from '../names.js';
@@ -14,7 +15,8 @@ import {
 import { fetchCaStatementOfficers } from './caSi.js';
 import type { LookupContext } from './context.js';
 import { defaultIlDtaCacheDir, ensureIlDtaIndex, matchIlDta, IL_DTA_HOME } from './ilDta.js';
-import { loadIlLlcIndex, matchIlLlc } from './ilLlc.js';
+import { loadIlLlcIndex, matchIlLlc, matchIlLlcDb } from './ilLlc.js';
+import { registryDbConfigured } from './registryDb.js';
 import { resolveHtmlOfficerState, usesHtmlOfficerAdapter } from './htmlStates.js';
 import { domainFromWebsite } from './siteFetch.js';
 import { resolveColoradoAgentOnly, resolveOhioAgentOnly } from './agentStates.js';
@@ -158,8 +160,11 @@ async function resolveCalifornia(input: NameLookupInput, ctx?: LookupContext): P
 
 async function resolveIllinois(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult> {
   if (ctx?.live !== false || ctx?.ilDtaDir) {
-    const llc = await loadIlLlcIndex(ctx?.ilDtaDir ?? defaultIlDtaCacheDir()).catch(() => null);
-    const hit = llc ? matchIlLlc(llc, [input.company_name], input.city) : null;
+    const hit = registryDbConfigured()
+      ? await matchIlLlcDb([input.company_name], input.city)
+      : await loadIlLlcIndex(ctx?.ilDtaDir ?? defaultIlDtaCacheDir())
+          .catch(() => null)
+          .then((llc) => (llc ? matchIlLlc(llc, [input.company_name], input.city) : null));
     if (hit) {
       const people = hitsFromRoster(input, hit.roster, 'us_sos', IL_DTA_HOME, 'exact', { cityMatch: hit.city_match });
       if (people.length) {
@@ -235,8 +240,8 @@ async function resolveOfficialNameLookup(
   }
 
   if (state === 'FL') {
-    const dir = flBulkDir();
-    const bulk = dir ? resolveFloridaBulk(input, dir, [input.company_name]) : null;
+    const lookup = flLookupProvider();
+    const bulk = lookup ? await resolveFloridaBulk(input, lookup, [input.company_name]) : null;
     if (bulk && (bulk.people.length || bulk.coverage_reason === 'agent_only')) return bulk;
   }
   if (state === 'CA') return resolveCalifornia(input, ctx);
@@ -377,6 +382,11 @@ export async function resolveNameLookup(
     if (unmask.people.some((p) => isWaterfallReady(p))) {
       return withDba(withSerperMeta(withOfficialSpend({ ...unmask, serper_usd: credits * 0.001 }, official), serper), dba);
     }
+  }
+
+  if (process.env.LICENSE_BOARDS_ENABLED !== 'false') {
+    const lic = await resolveLicenseBoards(input, ctx);
+    if (lic?.people.some((p) => isWaterfallReady(p))) return withDba(withSerperMeta(withOfficialSpend(lic, official), serper), dba);
   }
 
   if (ctx?.hardToFindEnabled !== false && process.env.HARD_TO_FIND_ENABLED !== 'false') {
