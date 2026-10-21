@@ -1,3 +1,4 @@
+import { resolveHardToFind } from './hardToFind.js';
 import { resolveUnmaskByAddress } from './unmask.js';
 import { normalizeState } from '../names.js';
 import { catalogByCode, isAgentOnlySkipState } from './catalog.js';
@@ -365,6 +366,27 @@ export async function resolveNameLookup(
     }
     if (unmask.people.some((p) => isWaterfallReady(p))) {
       return withDba(withSerperMeta(withOfficialSpend({ ...unmask, serper_usd: credits * 0.001 }, official), serper), dba);
+    }
+  }
+
+  if (ctx?.hardToFindEnabled !== false && process.env.HARD_TO_FIND_ENABLED !== 'false') {
+    const hard = await resolveHardToFind(input, ctx);
+    if (hard.credits) {
+      official.serper_credits = (official.serper_credits || 0) + hard.credits;
+      official.serper_usd = Number(((official.serper_usd || 0) + hard.credits * SERPER_USD_PER_QUERY).toFixed(4));
+      official.via_serper = true;
+    }
+    if (hard.people.some((p) => isWaterfallReady(p))) {
+      return withDba(
+        withSerperMeta(
+          withOfficialSpend(
+            { people: hard.people, coverage_reason: null, source: 'hard_to_find', source_url: hard.people[0].source_url, implemented: true, via_serper: true, serper_credits: 0 },
+            official,
+          ),
+          serper,
+        ),
+        dba,
+      );
     }
   }
 

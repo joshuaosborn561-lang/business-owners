@@ -86,6 +86,8 @@ export interface LookupContext {
   caBatchDebug?: boolean;
   /** LLC unmask-by-address step (default on). */
   unmaskEnabled?: boolean;
+  /** Hard-to-find LinkedIn + aggregator owner step (default on). */
+  hardToFindEnabled?: boolean;
   /** Skip Playwright and run dz_omar + web-fetch only. Default for --ca-batch. */
   caHybridOnly?: boolean;
   /** Opt into the Incapsula-blocked Playwright UI path. */

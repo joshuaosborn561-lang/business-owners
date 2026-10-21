@@ -22,3 +22,11 @@ test('operators at address skip self and virtual offices', () => {
   ]);
   assert.deepEqual(ops, ['Acme Sitework Co']);
 });
+
+import { siblingEntitiesFromOrganic } from './unmask.js';
+test('sibling entities from organic', () => {
+  const sibs = siblingEntitiesFromOrganic('100 Glass Site LLC', [
+    { title: '100 Glass Site LLC in Austin, TX', snippet: 'Also at this address: Acme Sitework, LLC and Registered Agents Inc' },
+  ]);
+  assert.deepEqual(sibs, ['Acme Sitework, LLC']);
+});

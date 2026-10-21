@@ -6,12 +6,12 @@ import { parseCsvLine } from '../src/server/lib/stateOwners/sos/sampleCsv.js';
 const lines = readFileSync(process.argv[2], 'utf8').trim().split('\n');
 const head = parseCsvLine(lines[0]);
 const ctx = defaultLookupContext({ live: true });
-const T: HardTechnique[] = ['li_title', 'aggregator', 'facebook'];
+const T: HardTechnique[] = ['li_title', 'aggregator'];
 const stats: Record<string, Record<string, number>> = {};
 const debug = process.argv.includes('--debug');
 for (const l of lines.slice(1)) {
   const c = parseCsvLine(l); const g = (k: string) => c[head.indexOf(k)];
-  const set = g('set'); stats[set] ??= { rows: 0, any: 0, li_title: 0, aggregator: 0, facebook: 0, credits: 0 };
+  const set = g('set'); stats[set] ??= { rows: 0, any: 0, li_title: 0, aggregator: 0, credits: 0 };
   stats[set].rows++; let any = false;
   for (const t of T) {
     const r = await resolveHardToFind({ company_name: g('company'), city: g('city'), state: g('state') }, ctx, [t]);

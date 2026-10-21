@@ -117,6 +117,8 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
               state: z.string().min(2),
               domain: z.string().optional(),
               website: z.string().optional().describe('Company website URL or host. Used for DBA + About fallback.'),
+              address: z.string().optional().describe('Principal address. Used by the LLC unmask step.'),
+              mailing_address: z.string().optional().describe('Parcel / tax-bill mailing address (e.g. permit-pulling parcels). Preferred by the LLC unmask step.'),
             }),
           )
           .optional()

@@ -11,7 +11,8 @@
  */
 import { normalizeState } from '../names.js';
 import type { LookupContext } from './context.js';
-import { serperPlaces } from './serper.js';
+import { serperPlaces, serperSearch } from './serper.js';
+import type { SerperOrganicHit } from './types.js';
 import { resolveSerperOwner } from './serperOwners.js';
 import type { NameLookupInput, NameLookupResult, SerperPlaceHit } from './types.js';
 import { isWaterfallReady } from './waterfall.js';
@@ -68,6 +69,23 @@ export function operatorsAtAddress(
   return out;
 }
 
+/** Sibling entities registered at the same address, from registry/aggregator titles. Pure. */
+export function siblingEntitiesFromOrganic(company: string, hits: SerperOrganicHit[], max = 2): string[] {
+  const self = normCompany(company);
+  const out: string[] = [];
+  for (const h of hits) {
+    const text = `${h.title || ''} | ${h.snippet || ''}`;
+    for (const m of text.matchAll(/\b([A-Z0-9][A-Za-z0-9&'.\- ]{2,60}?,? (?:LLC|L\.L\.C\.|INC\.?|Inc\.?|CORP\.?|Corp\.?|Corporation|Company|LP|LLP|PLLC))\b/g)) {
+      const name = m[1].split(/[:;]\s*/).pop()!.replace(/^(Discover Company Info on|Company Profile|About|Also|and)\s+/i, '').trim();
+      const n = normCompany(name);
+      if (!n || n.length < 4 || n === self || VIRTUAL_OFFICE.test(name) || /^\d/.test(name)) continue;
+      if (!out.some((o) => normCompany(o) === n)) out.push(name);
+      if (out.length >= max) return out;
+    }
+  }
+  return out;
+}
+
 export interface UnmaskOptions {
   /** Run even when the name does not look like a shell. Default true; the waterfall passes false. */
   allNames?: boolean;
@@ -75,7 +93,7 @@ export interface UnmaskOptions {
 }
 
 export async function resolveUnmaskByAddress(
-  input: NameLookupInput & { address?: string | null },
+  input: NameLookupInput,
   ctx?: LookupContext,
   opts: UnmaskOptions = {},
 ): Promise<NameLookupResult> {
@@ -94,7 +112,7 @@ export async function resolveUnmaskByAddress(
   const before = ctx?.serper?.credits ?? 0;
   const credits = () => Math.max(0, (ctx?.serper?.credits ?? 0) - before);
 
-  let street = streetLine(input.address);
+  let street = streetLine(input.mailing_address) || streetLine(input.address);
   if (!street) {
     const self = await serperPlaces(`${company} ${input.city || ''} ${state}`, ctx);
     const target = normCompany(company);
@@ -108,6 +126,13 @@ export async function resolveUnmaskByAddress(
 
   const near = await serperPlaces(`${street} ${input.city || ''} ${state}`, ctx);
   const operators = operatorsAtAddress(company, street, near.places || [], opts.maxOperators ?? 2);
+  if (operators.length < (opts.maxOperators ?? 2)) {
+    // Houses and suites Maps does not list: registry/aggregator pages list sibling LLCs at the address.
+    const organic = await serperSearch(`"${street}" ${input.city || ''} ${state} LLC`, ctx);
+    for (const sib of siblingEntitiesFromOrganic(company, organic.organic || [], 2)) {
+      if (!operators.includes(sib)) operators.push(sib);
+    }
+  }
   for (const op of operators) {
     const res = await resolveSerperOwner({ ...input, company_name: op, domain: null, website: null }, ctx);
     const ready = res.people.filter((p) => isWaterfallReady(p));

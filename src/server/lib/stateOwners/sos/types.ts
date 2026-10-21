@@ -57,6 +57,8 @@ export interface NameLookupInput {
   website?: string | null;
   /** Optional mailing / principal address. Used by the LLC unmask step. */
   address?: string | null;
+  /** Parcel / tax-bill mailing address (e.g. from permit-pulling parcels). Preferred by the unmask step. */
+  mailing_address?: string | null;
   list_id?: string;
   lead_id?: number;
 }

@@ -90,6 +90,8 @@ export async function readCompanyCsv(path: string): Promise<SampleRow[]> {
       state,
       website,
       domain,
+      address: get('address', 'principal_address', 'street') || null,
+      mailing_address: get('mailing_address', 'owner_mailing_address', 'mail_address') || null,
       ...(id ? { id } : {}),
     });
   }
