@@ -21,6 +21,9 @@ import { APIFY_USD_PER_BLOCKED_LOOKUP, companySpendKey } from './spend.js';
 import type { NameLookupInput } from './types.js';
 
 /** Datacenter IPs get Cloudflare/Incapsula. Try residential proxy before Apify. TX/IL stay direct. */
+/** Registry hosts that drop or time out connections from the box network. */
+export const BOX_UNREACHABLE_STATES = new Set(['GA', 'UT', 'NC', 'OH', 'PA', 'MA']);
+
 export const BOT_BLOCK_PROXY_STATES = new Set([
   'AL',
   'AZ',
@@ -242,8 +245,24 @@ export async function fetchOfficialPage(
       return { status, body: '', url, via_apify: false, blocked: true, usd: 0, apify_worthy: true };
     }
   } catch (err) {
-    ctx.companyKey = prevKey;
     const timedOut = isTimeoutError(err) || lookupDeadlineExceeded(ctx);
+    // Registries unreachable from this network (WAF drop / no route): go
+    // straight to the Apify residential fetch when the budget allows.
+    const unreachable = BOX_UNREACHABLE_STATES.has(opts.state) && !lookupDeadlineExceeded(ctx);
+    if (unreachable && canUseApify(ctx, opts.input, opts.allowApify)) {
+      try {
+        const got = await apifyFetchHtml(url, ctx, { preferWebFetch: false });
+        ctx.companyKey = prevKey;
+        const html = got.refused ? '' : got.html || got.text;
+        if (html && !looksBlocked(200, html) && !isChallengePage(html)) {
+          return { status: 200, body: html, url, via_apify: true, blocked: false, usd: got.usd, apify_worthy: true };
+        }
+        return { status: 0, body: '', url, via_apify: !got.refused, blocked: true, usd: got.usd || 0, apify_worthy: true };
+      } catch {
+        /* fall through */
+      }
+    }
+    ctx.companyKey = prevKey;
     return {
       status: 0,
       body: '',

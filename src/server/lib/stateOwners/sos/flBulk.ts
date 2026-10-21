@@ -5,6 +5,7 @@
  * registrant). Lookups are a binary search, so no Sunbiz HTTP (403 from
  * datacenter IPs) and no Apify.
  */
+import { lookupFlPrefixDb } from './registryDb.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ilNormName } from './ilLlc.js';
@@ -135,4 +136,28 @@ async function crossByAddress(input: NameLookupInput, corp: string[]): Promise<N
   return people.length
     ? { people, coverage_reason: null, source: 'sunbiz', source_url: FL_BULK_URL, match_method: 'exact', entity_id: corp[1], implemented: true, agent_promoted: 'candidate' }
     : null;
+}
+
+/**
+ * Trade-name → legal-name in FL via a city-scoped name-key prefix search.
+ * Pick the registry name that best overlaps the trade name; only unambiguous picks.
+ */
+export async function flPrefixCandidates(company: string, city: string | null | undefined): Promise<string[]> {
+  if (!registryDbConfigured() || !city) return [];
+  const words = String(company).split(/\s[-–|:]\s|\s\(|\|/)[0].replace(/[+]/g, ' ').split(/\s+/).filter(Boolean);
+  const full = ilNormName(company);
+  const out: string[] = [];
+  for (const n of [3, 2]) {
+    if (words.length < n) continue;
+    const prefix = ilNormName(words.slice(0, n).join(' '));
+    if (prefix.length < 6) continue;
+    const r = await lookupFlPrefixDb(prefix, city);
+    const keys = [...new Set([...(r?.entities || []).map((e) => e.name_key), ...(r?.fictitious || []).map((f) => f.name_key)])];
+    // Prefer keys that are a prefix of the trade name (legal name shorter than Maps title).
+    const contained = keys.filter((k) => full.startsWith(k));
+    const pick = contained.length ? contained.sort((a, b) => b.length - a.length).slice(0, 1) : keys.length <= 2 ? keys : [];
+    for (const k of pick) if (!out.includes(k)) out.push(k);
+    if (out.length) break;
+  }
+  return out.slice(0, 2);
 }

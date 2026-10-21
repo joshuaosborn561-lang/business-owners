@@ -50,3 +50,8 @@ export interface FlLicenseRow { name_key: string; license_no: string; class: str
 export async function lookupFlLicenseDb(keys: string[]): Promise<FlLicenseRow[] | null> {
   return rpc('bo_lookup_fl_license', { keys });
 }
+
+/** Name-key prefix search in one city (trade names often extend the legal name). */
+export async function lookupFlPrefixDb(prefix: string, city: string): Promise<{ entities: FlEntityRow[]; fictitious: FlFicRow[] } | null> {
+  return rpc('bo_lookup_fl_prefix', { prefix, city });
+}

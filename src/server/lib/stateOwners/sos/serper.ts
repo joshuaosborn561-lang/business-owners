@@ -1,9 +1,47 @@
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { DESKTOP_UA } from '../http.js';
 import type { LookupContext } from './context.js';
 import { ctxFetch, ctxSerper, serperKeyFromEnv } from './context.js';
 import type { SerperOrganicHit, SerperPlacesResponse, SerperSearchResponse } from './types.js';
 
 /** Charge 1 Serper credit on the unified TOTAL_MAX_USD ledger. False = skip the vendor call. */
+/**
+ * Process-wide Serper ledger. Every real HTTP call is reserved here BEFORE it
+ * is sent, whether or not the caller's ctx carries a SpendTracker, so the cap
+ * cannot be under-counted by sub-contexts. Hard-stops at SERPER_HARD_CAP_USD
+ * (falls back to TOTAL_MAX_USD) minus the tracked Apify spend.
+ */
+let globalSerperCalls = -1;
+function ledgerPath(): string | null {
+  return process.env.SERPER_LEDGER_FILE?.trim() || null;
+}
+function loadLedger(): void {
+  if (globalSerperCalls >= 0) return;
+  globalSerperCalls = 0;
+  const p = ledgerPath();
+  if (p && existsSync(p)) globalSerperCalls = Number(readFileSync(p, 'utf8').trim()) || 0;
+}
+export function globalSerperCredits(): number {
+  loadLedger();
+  return globalSerperCalls;
+}
+export function resetGlobalSerper(n = 0): void {
+  globalSerperCalls = n;
+}
+function globalCapUsd(): number {
+  const raw = Number(process.env.SERPER_HARD_CAP_USD || process.env.TOTAL_MAX_USD || 0);
+  return Number.isFinite(raw) && raw > 0 ? raw : Infinity;
+}
+export function reserveGlobalSerper(ctx?: LookupContext): boolean {
+  loadLedger();
+  const apify = Number((ctx?.spend as { apifyUsd?: number } | undefined)?.apifyUsd || 0);
+  if ((globalSerperCalls + 1) * 0.001 + apify > globalCapUsd()) return false;
+  globalSerperCalls += 1;
+  const p = ledgerPath();
+  if (p) writeFileSync(p, String(globalSerperCalls));
+  return true;
+}
+
 export function chargeSerperQuery(ctx?: LookupContext): boolean {
   if (ctx?.spend && !ctx.spend.reserveSerper(1, ctx.companyKey)) return false;
   ctxSerper(ctx).add(1);
@@ -42,6 +80,10 @@ export async function serperSearch(query: string, ctx?: LookupContext): Promise<
   if (!key) return { organic: [] };
 
   const fetchFn = ctxFetch(ctx);
+  // Reserve on both ledgers BEFORE the paid request (previously the tracker was
+  // charged after the call, so refused calls were paid but never counted).
+  if (!chargeSerperQuery(ctx)) return { organic: [] };
+  if (!reserveGlobalSerper(ctx)) return { organic: [] };
   try {
     const res = await fetchFn(SERPER_SEARCH_URL, {
       method: 'POST',
@@ -54,7 +96,6 @@ export async function serperSearch(query: string, ctx?: LookupContext): Promise<
       body: JSON.stringify({ q, gl: 'us', hl: 'en', num: 10 }),
     });
     if (!res.ok) return { organic: [] };
-    if (!chargeSerperQuery(ctx)) return { organic: [] };
     const json = (await res.json()) as SerperSearchResponse;
     return json && typeof json === 'object' ? json : { organic: [] };
   } catch {
@@ -80,6 +121,8 @@ export async function serperPlaces(query: string, ctx?: LookupContext): Promise<
   if (!key) return { places: [] };
 
   const fetchFn = ctxFetch(ctx);
+  if (!chargeSerperQuery(ctx)) return { places: [] };
+  if (!reserveGlobalSerper(ctx)) return { places: [] };
   try {
     const res = await fetchFn(SERPER_PLACES_URL, {
       method: 'POST',
@@ -92,7 +135,6 @@ export async function serperPlaces(query: string, ctx?: LookupContext): Promise<
       body: JSON.stringify({ q, gl: 'us', hl: 'en' }),
     });
     if (!res.ok) return { places: [] };
-    if (!chargeSerperQuery(ctx)) return { places: [] };
     const json = (await res.json()) as SerperPlacesResponse;
     return json && typeof json === 'object' ? json : { places: [] };
   } catch {

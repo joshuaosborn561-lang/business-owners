@@ -1,6 +1,8 @@
+import { ilNormName } from './ilLlc.js';
+import { nameVariants, registryLegalNames, STATE_REGISTRY_SITE } from './legalNames.js';
 import { resolveSodaState, SODA_STATES } from './sodaStates.js';
 import { resolveLicenseBoards } from './licenseBoards.js';
-import { flLookupProvider, resolveFloridaBulk } from './flBulk.js';
+import { flLookupProvider, flPrefixCandidates, resolveFloridaBulk } from './flBulk.js';
 import { resolveHardToFind } from './hardToFind.js';
 import { resolveUnmaskByAddress } from './unmask.js';
 import { normalizeState } from '../names.js';
@@ -249,6 +251,11 @@ async function resolveOfficialNameLookup(
     const lookup = flLookupProvider();
     const bulk = lookup ? await resolveFloridaBulk(input, lookup, [input.company_name]) : null;
     if (bulk && (bulk.people.length || bulk.coverage_reason === 'agent_only')) return bulk;
+    if (lookup) {
+      const alts = await flPrefixCandidates(input.company_name, input.city);
+      const viaPrefix = alts.length ? await resolveFloridaBulk(input, lookup, alts) : null;
+      if (viaPrefix && viaPrefix.people.length) return { ...viaPrefix, match_method: 'substring', legal_name: alts[0] };
+    }
   }
   if (state === 'CA') return resolveCalifornia(input, ctx);
   if (state === 'IL') return resolveIllinois(input, ctx);
@@ -325,6 +332,25 @@ export async function resolveNameLookup(
   }
 
   let official = await resolveOfficialNameLookup(input, ctx);
+  // SODA states and FL already do prefix matching inside one lookup; re-looping them
+  // burns the per-lookup deadline and starves the LinkedIn/about fallback.
+  if (!official.people.some((p) => isWaterfallReady(p)) && STATE_REGISTRY_SITE[normalizeState(input.state) || ''] && !SODA_STATES.has(normalizeState(input.state) || '') && normalizeState(input.state) !== 'FL') {
+    const tried = new Set([ilNormName(company), ilNormName(legalName || '')]);
+    const free = nameVariants(company, input.city);
+    // Registry site: search tested at 0 useful titles for small businesses; off unless BO_REGISTRY_SITE_SEARCH=1.
+    const site = legalName || process.env.BO_REGISTRY_SITE_SEARCH !== '1' ? { names: [] as string[] } : await registryLegalNames(input, ctx);
+    const freeReg = ['FL', 'CO', 'NY', 'CT', 'OR', 'IL', 'TX'].includes(normalizeState(input.state) || '');
+    const alts = [...site.names, ...free].slice(0, freeReg ? 3 : 2);
+    for (const alt of alts) {
+      if (tried.has(ilNormName(alt))) continue;
+      tried.add(ilNormName(alt));
+      const retry = await resolveOfficialNameLookup({ ...input, company_name: alt }, ctx);
+      if (retry.people.some((p) => isWaterfallReady(p))) {
+        official = { ...retry, legal_name: alt, apify_usd: Number(((official.apify_usd || 0) + (retry.apify_usd || 0)).toFixed(4)) };
+        break;
+      }
+    }
+  }
   if (legalName && !official.people.some((p) => isWaterfallReady(p))) {
     const retry = await resolveOfficialNameLookup({ ...input, company_name: legalName }, ctx);
     const retryReady = retry.people.some((p) => isWaterfallReady(p));

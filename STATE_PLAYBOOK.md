@@ -702,3 +702,41 @@ Cost of the free path: Serper about $0.01–0.02 per company (≤ 15 credits). A
 States at >=70%: 11 (IA, ID, KY, MI, MO, NE, NV, OK, TN, TX, VA). Samples of 5 or fewer rows are directional only.
 New: live SODA adapters (sodaStates.ts) for CT principals, OR authorized rep/RA, CO and NY agent (person-RA rule).
 Note: per-row Serper use is ~20 credits, about 4x what the Apify spend file tracks; the cap must count Serper from per-row credits.
+
+## Round 2 (2026-10-21, 4:12–5:35pm CT)
+
+Changes: Serper spend now reserved before each paid call on both the run tracker and a process-wide ledger (`SERPER_LEDGER_FILE`, hard cap `SERPER_HARD_CAP_USD`/`TOTAL_MAX_USD`); FL city-scoped name-prefix lookup (`bo_lookup_fl_prefix` RPC) for trade names; looser SODA matching (registry name leading the trade name) for CT/OR/CO/NY; trade-name variants retried on other official sources; Apify residential fallback for registries that drop the box connection (GA, UT, NC, OH, PA, MA). Registry-site Serper search tested at 0 useful titles and is off by default (`BO_REGISTRY_SITE_SEARCH=1`).
+
+Re-test (same rows, counts only):
+
+| State | Before | After | Rate | Apify $/lookup | Top sources |
+|---|---|---|---|---|---|
+| FL | 3/9 | 4/9 | 44% | 0.000 | {'sunbiz': 4} |
+| CO | 6/9 | 5/9 | 56% | 0.000 | {'linkedin': 2, 'website': 1} |
+| NY | 4/6 | 3/6 | 50% | 0.000 | {'linkedin': 3} |
+| CA | 6/10 | 7/10 | 70% | 0.041 | {'linkedin': 5, 'hard_to_find': 1} |
+| OR | 6/10 | 6/10 | 60% | 0.000 | {'us_sos': 4, 'serper': 2} |
+| NM | 3/5 | 5/10 | 50% | 0.000 | {'linkedin': 4, 'website': 1} |
+| PA | 3/5 | 4/10 | 40% | 0.031 | {'serper': 2, 'linkedin': 2} |
+| SC | 3/5 | 6/10 | 60% | 0.000 | {'website': 2, 'hard_to_find': 2} |
+| SD | 3/5 | 4/6 | 67% | 0.000 | {'hard_to_find': 2, 'website': 1} |
+| WV | 3/5 | 4/10 | 40% | 0.000 | {'linkedin': 4} |
+| MA | 2/7 | 2/7 | 29% | 0.000 | {'serper': 1, 'linkedin': 1} |
+| NC | 2/5 | 6/9 | 67% | 0.008 | {'linkedin': 4, 'serper': 2} |
+| OH | 0/5 | 3/10 | 30% | 0.000 | {'linkedin': 3} |
+| GA | 5/10 | 5/10 | 50% | 0.000 | {'serper': 3, 'linkedin': 1} |
+| UT | 0/5 | 2/10 | 20% | 0.017 | {'linkedin': 2} |
+| CT | 5/10 | 5/10 | 50% | 0.000 | {'us_sos': 4, 'serper': 1} |
+
+Findings: Apify residential reached the GA, MA, UT, NC and PA registries but every page was still a bot challenge (0 rows gained), so it should stay off for those states. FL prefix matching produced 4 Sunbiz hits, up from 2. Moves of ±1 row are within run-to-run web variance. Round spend was about $4.2.
+
+Paid sources (public pricing only):
+
+| Vendor | Price (public) | Per lookup | Coverage | Officer names? |
+|---|---|---|---|---|
+| Enigma | Pro $20/mo (2,100 credits), Max $200/mo; 1 credit = $0.01 | Person Name $0.01 + Person Role $0.01 + Legal Entity Name $0.05 ≈ $0.07 per filled match | US businesses (business graph) | Yes (people product); coverage for small businesses not stated |
+| Cobalt Intelligence | Not published; subscription plans for 400–100k lookups/mo; third-party reported ~$2 (<500/mo) to $0.60 (10k/mo) | $0.60–$2.00; credit used even on no-match; DE pass-through $15–20 | 50 states + DC live SOS | Yes where the state publishes officers |
+| Baselayer | Startup $150/mo (500 credits), Growth $750/mo (3,000 credits) | ~$0.25–$0.30 if 1 credit per search (credits per check not stated) | US SOS + online | Yes: business_officers (SOS; Enhanced Search adds website/LinkedIn) |
+| OpenCorporates | Essentials £2,250/yr (500 calls/mo), Starter £6,600/yr (2,500/mo), Basic £12,000/yr (5,000/mo) | ~£0.37–£0.20 per call (lookup often needs 2 calls) | All US states it collects (officers vary by state) | Yes where registry publishes |
+| Middesk | Not published; reported $2–$5 per verification, annual minimums | $2–$5 | 50 states | Yes (registrations[].officers) |
+| SignalHire | $49/mo (600 email credits) … $99/mo | contact enrichment, not owner discovery | n/a | No (needs a known person) |
