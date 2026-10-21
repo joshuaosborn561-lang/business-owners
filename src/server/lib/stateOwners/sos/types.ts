@@ -55,6 +55,8 @@ export interface NameLookupInput {
   domain?: string | null;
   /** Company website URL or host. Passed through from CSV / MCP `website`. */
   website?: string | null;
+  /** Optional mailing / principal address. Used by the LLC unmask step. */
+  address?: string | null;
   list_id?: string;
   lead_id?: number;
 }

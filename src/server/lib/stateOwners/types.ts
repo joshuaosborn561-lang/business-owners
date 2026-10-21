@@ -41,6 +41,7 @@ export const BOARD_SOURCES = [
   'fbn',
   'linkedin',
   'find_named_person',
+  'unmask_address',
 ] as const;
 
 export type BoardSource = (typeof BOARD_SOURCES)[number];

@@ -528,9 +528,20 @@ export interface SplitPersonName {
  * ALL-CAPS board names. Last token is last name only for 2–3 tokens.
  * 4+ tokens: first_name stays null and review_flag is set — do not guess.
  */
+/** Drop page-copy lead-ins scraped with a name ("Meet Jane Doe", "Owner: Jane Doe"). */
+export function stripLeadIn(name: string): string {
+  let n = String(name || '').trim();
+  for (let i = 0; i < 3; i++) {
+    const next = n.replace(/^(meet|about|contact|call|by|with|hi,?|i'?m|owner|founder|co-founder|president|ceo|principal)\b[:,\-\s]*/i, '').trim();
+    if (next === n) break;
+    n = next;
+  }
+  return n;
+}
+
 export function splitPersonName(raw: string): SplitPersonName {
   const full_name_raw = String(raw || '').replace(/\s+/g, ' ').trim();
-  const tokens = tokenizeCapsName(full_name_raw);
+  const tokens = tokenizeCapsName(stripLeadIn(full_name_raw));
   if (tokens.length === 2 || tokens.length === 3) {
     return {
       first_name: tokens.slice(0, -1).join(' '),

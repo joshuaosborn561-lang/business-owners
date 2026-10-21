@@ -84,6 +84,8 @@ export interface LookupContext {
   caBatchCheckpointPath?: string;
   /** Dump per-step HTTP status from the Playwright run (CLI --ca-debug). */
   caBatchDebug?: boolean;
+  /** LLC unmask-by-address step (default on). */
+  unmaskEnabled?: boolean;
   /** Skip Playwright and run dz_omar + web-fetch only. Default for --ca-batch. */
   caHybridOnly?: boolean;
   /** Opt into the Incapsula-blocked Playwright UI path. */

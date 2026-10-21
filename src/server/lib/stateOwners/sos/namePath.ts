@@ -1,3 +1,4 @@
+import { resolveUnmaskByAddress } from './unmask.js';
 import { normalizeState } from '../names.js';
 import { catalogByCode, isAgentOnlySkipState } from './catalog.js';
 import { resolveAgentFallback } from './agentFallback.js';
@@ -332,6 +333,19 @@ export async function resolveNameLookup(
       official.serper_credits = (official.serper_credits || 0) + fallback.serper_credits;
       official.serper_usd = Number(((official.serper_usd || 0) + (fallback.serper_usd || 0)).toFixed(4));
       official.via_serper = true;
+    }
+  }
+
+  if (ctx?.unmaskEnabled !== false && process.env.UNMASK_ENABLED !== 'false') {
+    const unmask = await resolveUnmaskByAddress(input, ctx, { allNames: false });
+    const credits = unmask.serper_credits || 0;
+    if (credits) {
+      official.serper_credits = (official.serper_credits || 0) + credits;
+      official.serper_usd = Number(((official.serper_usd || 0) + credits * 0.001).toFixed(4));
+      official.via_serper = true;
+    }
+    if (unmask.people.some((p) => isWaterfallReady(p))) {
+      return withDba(withSerperMeta(withOfficialSpend({ ...unmask, serper_usd: credits * 0.001 }, official), serper), dba);
     }
   }
 

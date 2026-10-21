@@ -124,3 +124,26 @@ Serper hits are waterfall-ready only at **high**. CA trigram is not ready unless
 - Apify billed from the finished run: `usageTotalUsd` + `chargedEventCounts` × event prices.
 - Serper ≤8 queries/company, $0.001 each, stop at 0.8.
 - Writes stay off until a later persist PR.
+
+
+---
+
+## Oct 21 2026 sample (counts only)
+
+47 Maps-listed small businesses, 20 states, 14 industries. Serper first, Apify fallback, cap $2.
+
+| Slice | Named, waterfall-ready |
+|---|---|
+| All | 31 / 47 (66%) |
+| Officer-publishing states | 22 / 32 (69%) |
+| Agent-only states | 9 / 15 (60%) |
+
+Hits by step: LinkedIn Serper 18, About page 7, Serper owner 5, state SOS 1. Spend: Apify $0.25, Serper ~650 credits (~$0.65).
+
+Shell LLC set (25 entities with principal addresses, FL/TX/GA): 5 / 25 before unmask (all TX SOS). Unmask-by-address alone: 1 / 25. Most shell addresses are houses, which Maps does not list, as the skill warns. FL Sunbiz and GA eCorp return 403 to datacenter IPs, so 17 of the 25 never reached the registry.
+
+### Levers to reach 70%
+
+1. FL Sunbiz behind a residential proxy (catalog says never Apify). GA eCorp Apify fallback is not getting past the challenge.
+2. MA and IL misses (0/2, 1/4): wire MA Corporations and IL DTA bulk officers into the name path.
+3. Unmask: add a Serper organic pass on the quoted address (Bizapedia / OpenCorporates list sibling LLCs and their managers) for addresses Maps does not list. Then pass the parcel mailing address from permit-pulling when there is one.

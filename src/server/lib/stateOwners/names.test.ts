@@ -272,3 +272,12 @@ describe('trigram fallback', () => {
     assert.equal(sodaWhereContainsLoose('business_name', 'Smith HVAC Heating Cooling LLC').includes('COOLING'), false);
   });
 });
+
+import { splitPersonName as splitForLeadIn } from './names.js';
+describe('splitPersonName lead-ins', () => {
+  it('drops Meet', () => {
+    const s = splitForLeadIn('Meet Jane Doe');
+    assert.equal(String(s.first_name).toUpperCase(), 'JANE');
+    assert.equal(String(s.last_name).toUpperCase(), 'DOE');
+  });
+});
