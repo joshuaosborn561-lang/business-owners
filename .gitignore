@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+.railway/
+coverage/
+tmp/
+ca-*-results.csv
+ca-*-results.csv.summary.json
+ca-*-results.csv.debug.json

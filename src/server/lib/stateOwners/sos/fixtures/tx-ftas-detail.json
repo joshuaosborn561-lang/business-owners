@@ -1,0 +1,25 @@
+{
+  "success": true,
+  "data": {
+    "taxpayerId": "32000000001",
+    "name": "SAMPLE BUILDERS LLC",
+    "mailingAddressCity": "AUSTIN",
+    "mailingAddressState": "TX",
+    "officerInfo": [
+      {
+        "AGNT_NM": "SAMPLE, RIVER",
+        "AGNT_TITL_TX": "CFO",
+        "CITY_NM": "AUSTIN",
+        "ST_CD": "TX",
+        "SOURCE": "SOS"
+      },
+      {
+        "AGNT_NM": "SAMPLE, JANE",
+        "AGNT_TITL_TX": "PRESIDENT",
+        "CITY_NM": "AUSTIN",
+        "ST_CD": "TX",
+        "SOURCE": "SOS"
+      }
+    ]
+  }
+}
