@@ -15,6 +15,11 @@ import { isEmptyJsShell, resolveArizona, AZ_SEARCH_UI } from './azCenter.js';
 import { resolveTexasComptroller, TX_FTAS_SEARCH } from './txComptroller.js';
 import { resolveFloridaSunbiz } from './flSunbiz.js';
 
+/** Apify residential proxy for blocked-state SOS pages. Off by default: it found no extra owners in testing. Set SOS_APIFY_PROXY=on to re-enable. */
+function blockedStateApifyEnabled(): boolean {
+  return process.env.SOS_APIFY_PROXY === 'on';
+}
+
 interface SearchHit {
   name: string;
   url: string;
@@ -224,7 +229,7 @@ async function officersFromSearchPage(
   if (picked.item.url && picked.item.url !== url) {
     const detail = await fetchOfficialPage(picked.item.url, ctx, {
       state,
-      allowApify: true,
+      allowApify: blockedStateApifyEnabled(),
       input,
       kind: 'detail',
     });
@@ -338,10 +343,13 @@ export async function resolveHtmlOfficerState(
   const apifyPolicy = catalogByCode().get(state)?.apify;
   // One residential fetch only after a real WAF block — never on not-found / timeout.
   // TX/FL and apify:never states stay on direct HTTP (+ residential proxy in fetchOfficialPage).
+  if (apifyWorthyUrl && !blockedStateApifyEnabled()) {
+    return blockedResult(sourceUrl, { via_apify: viaApify, apify_usd: usd });
+  }
   if (apifyWorthyUrl && apifyPolicy !== 'never' && !lookupDeadlineExceeded(ctx)) {
     const search = await fetchOfficialPage(apifyWorthyUrl.url, ctx, {
       state,
-      allowApify: true,
+      allowApify: blockedStateApifyEnabled(),
       input,
       kind: 'search',
     });

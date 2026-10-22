@@ -99,7 +99,9 @@ describe('HTML registry adapters', () => {
     assert.ok(result.coverage_reason === 'not_found' || result.coverage_reason === 'blocked');
   });
 
-  it('uses Apify Playwright only after a blocked direct fetch', async () => {
+  it('uses Apify Playwright only after a blocked direct fetch (when SOS_APIFY_PROXY=on)', async () => {
+    process.env.SOS_APIFY_PROXY = 'on';
+    try {
     const result = await resolveHtmlOfficerState(
       { company_name: 'Sample Builders LLC', city: 'Atlanta', state: 'GA' },
       'GA',
@@ -119,6 +121,9 @@ describe('HTML registry adapters', () => {
     assert.equal(result.via_apify, true);
     assert.ok((result.apify_usd || 0) > 0);
     assert.ok(result.people.some((p) => p.last_name === 'SAMPLE'));
+    } finally {
+      delete process.env.SOS_APIFY_PROXY;
+    }
   });
 
   it('extracts TX Comptroller officers from official HTML fixtures', async () => {
