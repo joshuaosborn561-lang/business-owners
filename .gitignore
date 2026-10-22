@@ -10,3 +10,5 @@ tmp/
 ca-*-results.csv
 ca-*-results.csv.summary.json
 ca-*-results.csv.debug.json
+__pycache__/
+*.pyc
