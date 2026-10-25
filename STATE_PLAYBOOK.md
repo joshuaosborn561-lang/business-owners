@@ -1,5 +1,7 @@
 # State playbook: finding small-business owners, all 50 states + DC
 
+> **Superseded Oct 25 2026.** A full re-verification of every state, national dataset and vendor is in `OWNER_PLAN_2026-10.md` with evidence under `research/2026-10-25/`. Where this file and that plan disagree, the plan is right. Known errors here: IL corp officers ARE in the free bulk files; OR authorized representatives are DBA owners, not LLC principals; PA has a free open-data officer file; the datacenter-block list is far longer than shown.
+
 Written Oct 21 2026. One entry per state. Entries marked *verified Oct 21* were spot-checked from the box. Everything else is from the existing adapter catalog (`src/server/lib/stateOwners/sos/catalog.ts`) or public documentation, so re-verify before building an adapter. "Measured" means the 47-company sample (about 2 rows per state), which is far too small to trust per state.
 
 ## Fallback chain (every state, in order)

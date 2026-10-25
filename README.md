@@ -72,3 +72,9 @@ Dockerfile + `railway.toml`. Health check: `/health`.
 ## Per-state tiers
 
 See [PLAN.md](PLAN.md) for tiers A / B / C.
+
+## Plan and research
+
+- `OWNER_PLAN_2026-10.md`: the current 50-state plan (tiers, buy list, roadmap, matching rules). Written from a fresh verification of every source on Oct 25 2026.
+- `research/2026-10-25/`: per-state findings with VERIFIED/UNVERIFIED tags and URLs, national datasets, paid vendors, and datacenter reachability.
+- `STATE_PLAYBOOK.md`: older notes; superseded by the plan where they disagree.
