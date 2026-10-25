@@ -81,6 +81,7 @@ export async function readCompanyCsv(path: string): Promise<SampleRow[]> {
     const state = normalizeState(get('state', 'st'));
     if (!company || !state) continue;
     const website = get('website', 'url', 'website_url', 'site', 'homepage', 'web') || null;
+    const phone = get('phone', 'phone_number', 'business_phone', 'telephone') || null;
     const domain = get('domain') || domainFromWebsite(website) || null;
     const id = get('id', 'row_id', 'key') || undefined;
     rows.push({
@@ -89,6 +90,7 @@ export async function readCompanyCsv(path: string): Promise<SampleRow[]> {
       city: city || null,
       state,
       website,
+      phone,
       domain,
       address: get('address', 'principal_address', 'street') || null,
       mailing_address: get('mailing_address', 'owner_mailing_address', 'mail_address') || null,

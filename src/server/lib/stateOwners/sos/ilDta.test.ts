@@ -103,3 +103,20 @@ describe('IL DTA bulk files', () => {
     }
   });
 });
+
+describe('IL corp Master officers (proc_corp_data v004)', () => {
+  it('reads president and secretary name+address fields and flags incorporators', async () => {
+    const { parseCorpMasterLine, officerFromMasterField } = await import('./ilDta.js');
+    const pad = (s: string, n: number) => (s + ' '.repeat(n)).slice(0, n);
+    const line = pad('12345678', 8) + pad('20150101', 8) + pad('', 24) + pad('MARIA GONZALEZ 123 W MAIN ST CHICAGO IL', 60) + pad('I LEGAL ZOOM 100 FORM ST GLENDALE CA', 60);
+    assert.equal(line.length, 160);
+    const parsed = parseCorpMasterLine(line);
+    assert.ok(parsed);
+    assert.equal(parsed!.file_number, '12345678');
+    assert.equal(parsed!.officers[0].name, 'MARIA GONZALEZ');
+    assert.equal(parsed!.officers[0].title, 'President');
+    assert.equal(parsed!.officers[1].title, 'Incorporator');
+    assert.equal(officerFromMasterField('', 'Secretary'), null);
+    assert.equal(officerFromMasterField('CT CORPORATION SYSTEM 208 S LASALLE', 'Secretary'), null);
+  });
+});

@@ -18,6 +18,7 @@ export const IL_DTA_HOME = 'https://www.ilsos.gov/data/bus-serv-home.html';
 export const IL_DTA_ZIP_BASE = 'https://www.ilsos.gov/data/bs';
 /** Officer + name files from the official DTA zip set (fgregg/il-corporate-filings Makefile). */
 export const IL_DTA_PREFERRED_ZIPS = [
+  'cdxallmst.zip',
   'cdxallnam.zip',
   'cdxallarp.zip',
   'cdxallagt.zip',
@@ -97,6 +98,41 @@ export function parseCorpAnnualLine(line: string): { file_number: string; office
   ] as const) {
     officers.push(...parseOfficerRoster(`${pair[1]}: ${pair[0]}`));
   }
+  return { file_number, officers };
+}
+
+/**
+ * CORP-MASTER (160 chars, proc_corp_data.pdf v004): positions 41-100 hold the
+ * president's name + address, 101-160 the secretary's, as one free-text field
+ * each. A leading "I" marks an incorporator rather than the officer. The name
+ * is the text before the street number; addresses never precede names.
+ */
+export function officerFromMasterField(raw: string, title: 'President' | 'Secretary'): RosterEntry | null {
+  let text = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  let role: 'President' | 'Secretary' | 'Incorporator' = title;
+  if (/^I\s+/.test(text) || /^I[A-Z]{2}\b/.test(text) === false && /^I\s/.test(text)) {
+    role = 'Incorporator';
+    text = text.replace(/^I\s+/, '');
+  }
+  const tokens = text.split(' ');
+  const cut = tokens.findIndex((t, i) => i > 0 && /\d/.test(t));
+  const name = (cut === -1 ? tokens : tokens.slice(0, cut)).join(' ').replace(/[,.]+$/, '').trim();
+  if (!name || name.split(' ').length < 2 || name.split(' ').length > 5) return null;
+  if (isRegistryAgentName(name)) return null;
+  return { name, title: role, role: 'officer', labeled: true };
+}
+
+export function parseCorpMasterLine(line: string): { file_number: string; officers: RosterEntry[] } | null {
+  const raw = line.replace(/\r$/, '');
+  if (raw.length < 100) return null;
+  const file_number = padSlice(raw, 0, 8);
+  if (!/^\d{4,8}$/.test(file_number)) return null;
+  const officers: RosterEntry[] = [];
+  const pres = officerFromMasterField(padSlice(raw, 40, 100), 'President');
+  const sec = officerFromMasterField(padSlice(raw, 100, 160), 'Secretary');
+  if (pres) officers.push(pres);
+  if (sec && !officers.some((o) => o.name.toLowerCase() === sec.name.toLowerCase())) officers.push(sec);
   return { file_number, officers };
 }
 
@@ -202,8 +238,13 @@ function ingestFixedWidth(index: IlDtaIndex, text: string, filename: string): vo
       }
     }
     if (treatMaster || raw.length === CORP_MASTER_LEN) {
-      const file_number = padSlice(raw, 0, 8);
-      if (/^\d{4,8}$/.test(file_number)) ensureEntity(index, file_number);
+      const parsed = parseCorpMasterLine(raw);
+      if (parsed) {
+        const row = ensureEntity(index, parsed.file_number);
+        for (const off of parsed.officers) {
+          if (!row.officers.some((o) => o.name.toLowerCase() === off.name.toLowerCase())) row.officers.push(off);
+        }
+      }
     }
   }
 }

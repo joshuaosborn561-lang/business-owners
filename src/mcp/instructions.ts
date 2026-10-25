@@ -6,7 +6,7 @@ You look up **small-business owners / officers** from a company name + city + st
 This is **not** the Permits MCP. Do not pull permits, parcels, or calling lists.
 
 ## Goal
-Return a person Email Finder Waterfall can consume in \`name_company\` mode: first name, last name, title, company, domain if known, source URL, confidence (band + 0–1 score). Target: **≥70% of small-business owners found, correct, and named** across the 31 jurisdictions that publish officers.
+Return a person Email Finder Waterfall can consume in \`name_company\` mode: first name, last name, title, company, domain if known, source URL, confidence (band + 0–1 score). Target: **≥70% of small-business owners found, correct, and named** across the 41 jurisdictions with an official owner source.
 
 ## Skip for now (registered-agent-only)
 Do not spend SOS budget on: CO, OH, NY, WI, IA, ND, SD, KS, ID, ME, MD, NJ, IN, TN, AR, AK, DE, MI, NM, SC.
@@ -19,7 +19,7 @@ Do not spend SOS budget on: CO, OH, NY, WI, IA, ND, SD, KS, ID, ME, MD, NJ, IN, 
 5. Every person gets a **confidence score**. Agents are never waterfall-ready.
 
 ## Tools
-- \`health\` — keys present (masked), skip-state list, 31 officer states.
+- \`health\` — keys present (masked), skip-state list, 41 officer states, unblocker + open-data flags.
 - \`lookup_business_owner\` — batch via \`rows[]\`. \`estimate_only\` quotes Serper credits + Apify envelope. \`ca_batch\` = CA hybrid. Counts / job_id / nameless samples only. Never dump officer names in chat.
 - \`get_business_owner_job\` — poll. Counts only.
 

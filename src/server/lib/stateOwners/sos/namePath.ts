@@ -5,6 +5,7 @@ import { resolveLicenseBoards } from './licenseBoards.js';
 import { flLookupProvider, flPrefixCandidates, resolveFloridaBulk } from './flBulk.js';
 import { resolveHardToFind } from './hardToFind.js';
 import { resolveUnmaskByAddress } from './unmask.js';
+import { resolveOpenDataOwners } from './openDataSources.js';
 import { normalizeState } from '../names.js';
 import { catalogByCode, isAgentOnlySkipState } from './catalog.js';
 import { resolveAgentFallback } from './agentFallback.js';
@@ -324,7 +325,17 @@ export async function resolveNameLookup(
   }
 
   const dba = await resolveDbaLegalName(input, ctx);
-  const legalName = dba.legal_name && dba.legal_name !== company ? dba.legal_name : null;
+  let legalName = dba.legal_name && dba.legal_name !== company ? dba.legal_name : null;
+
+  // Free public files first: PA officers, FMCSA, NPPES, state license / liquor / trade-name files.
+  // $0, no bot walls, and the hit carries a title from a filing rather than a web page.
+  const open = await resolveOpenDataOwners(input, ctx);
+  if (open.result?.people.some((p) => isWaterfallReady(p))) {
+    return withDba(open.result, dba);
+  }
+  if (open.legal_name && !legalName && ilNormName(open.legal_name) !== ilNormName(company)) {
+    legalName = open.legal_name;
+  }
 
   const serper = await resolveSerperOwner(input, ctx);
   if (serperIsHighConfidence(serper)) {

@@ -55,6 +55,8 @@ export interface NameLookupInput {
   domain?: string | null;
   /** Company website URL or host. Passed through from CSV / MCP `website`. */
   website?: string | null;
+  /** Business phone from the Maps row. Joins FMCSA / license / liquor files. */
+  phone?: string | null;
   /** Optional mailing / principal address. Used by the LLC unmask step. */
   address?: string | null;
   /** Parcel / tax-bill mailing address (e.g. from permit-pulling parcels). Preferred by the unmask step. */
@@ -83,6 +85,9 @@ export interface WaterfallOwnerHit {
   city_match?: boolean;
   /** Website/About hits need a second source before waterfall_ready. */
   corroborated?: boolean;
+  /** Contact fields some public files carry (FMCSA, NPPES, NYC DOB). Candidates for the waterfall to verify. */
+  email?: string | null;
+  phone?: string | null;
 }
 
 export interface NameLookupResult {
@@ -108,6 +113,11 @@ export interface NameLookupResult {
   agent_promoted?: 'same_address' | 'surname' | 'candidate';
   /** Entity mailing address from the registry; feeds the unmask step. */
   mailing_address?: string | null;
+  /** Which open-data source produced the hit (pa_dos, fmcsa, nppes, ...). */
+  open_data_source?: string | null;
+  /** USD spent on the unblocker (residential fetch API) for this row. */
+  unblocker_usd?: number;
+  via_unblocker?: boolean;
 }
 
 export type BusinessOwnerJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
@@ -153,6 +163,10 @@ export interface BusinessOwnerJobSnapshot {
   serper_credits: number;
   serper_usd: number;
   via_serper: number;
+  unblocker_estimate_usd?: number;
+  unblocker_usd?: number;
+  unblocker_requests?: number;
+  via_open_data?: number;
   ocr_used: number;
   writes_enabled: boolean;
   phase: number;

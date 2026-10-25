@@ -9,6 +9,7 @@ import {
   apifyUsdPerCompanyFromEnv,
 } from './spend.js';
 import type { IlDtaIndex } from './ilDta.js';
+import type { OpenDataSourceId } from './openDataSources.js';
 import type { SerperSearchResponse } from './types.js';
 
 /** Direct SOS HTTP must finish in this window. Never wait on a hung registry. */
@@ -53,6 +54,14 @@ export interface LookupContext {
   azDetailPayload?: unknown;
   /** Cached residential proxy fetch (bot-block states only). */
   proxyFetch?: FetchLike | null;
+  /** Free open-data owner sources (PA officers, FMCSA, NPPES, license and liquor files). Default on. */
+  openDataEnabled?: boolean;
+  /** Restrict open-data sources (tests / targeted runs). */
+  openDataSources?: OpenDataSourceId[];
+  /** Unblocker (residential fetch API) for bot-walled registries. Default on when UNBLOCKER_API_KEY is set. */
+  unblockerEnabled?: boolean;
+  /** Injected unblocker fetch (tests). */
+  unblockerFetch?: (url: string, init?: RequestInit) => Promise<{ status: number; body: string; url?: string; usd?: number }>;
   /** Unified Apify + Serper cap. Env: TOTAL_MAX_USD (falls back to APIFY_MAX_USD). */
   totalMaxUsd?: number | null;
   /** Hard cap for Apify spend this context. Env: APIFY_MAX_USD. */

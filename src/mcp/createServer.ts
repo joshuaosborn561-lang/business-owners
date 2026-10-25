@@ -1,3 +1,4 @@
+import { unblockerConfigFromEnv } from '../server/lib/stateOwners/sos/unblocker.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { config, hasSupabase } from '../server/config.js';
@@ -38,6 +39,9 @@ export function healthPayload() {
     apify_usd_per_company: config.apifyUsdPerCompany,
     apify_residential_proxy_configured: apifyResidentialProxyConfigured(),
     find_named_person_configured: Boolean(config.findNamedPersonUrl),
+    unblocker_configured: unblockerConfigFromEnv() !== null,
+    unblocker_provider: unblockerConfigFromEnv()?.provider ?? null,
+    open_data_enabled: process.env.OPEN_DATA_ENABLED !== 'false',
     writes_enabled: config.writesEnabled,
     officer_publishing_states: [...OFFICER_PUBLISHING_CODES],
     skipped_agent_only_states: [...AGENT_ONLY_SKIP_CODES],
@@ -104,7 +108,7 @@ export function createBusinessOwnersMcpServer(): McpServer {
       title: 'Lookup US business owners by company + city + state',
       description: `WHEN TO USE: Need an owner/officer name with no permit or license number. Input is company name + city + state (optional domain).
 WHAT IT DOES: DBA→legal name (website footer/privacy/terms/copyright, Serper LLC/Inc query, Maps/GBP, free county FBN) → Serper owner → official SOS (CA hybrid dz_omar + web-fetch SI PDFs) → agent fallback (About page, LinkedIn Serper, find-named-person). Prefer Serper over Apify. APIFY_MAX_USD is a hard cap. Never paid datasets. estimate_only quotes credits/$. ca_batch defaults to hybrid-only. Counts, job_id, per-state hit rates, nameless samples, confidence. Never dump names.
-SKIP STATES: CO OH NY WI IA ND SD KS ID ME MD NJ IN TN AR AK DE MI NM SC (agent-only; still allowed if you pass them explicitly).
+ORDER: free open data first (PA officers, FMCSA by phone, NPPES, state license / liquor / trade-name files, FL + IL bulk) → Serper → official registry (unblocker lane for bot-walled states when UNBLOCKER_API_KEY is set) → About/LinkedIn → unmask. Pass phone from the Maps row: it is the strongest join key.\nQUOTE FIRST: call with estimate_only=true, show quote.total_usd_max to the user, and run only after they approve.\nSKIP STATES: CO OH NY WI MD NJ SC KS DE ME (no officer data exists; trade names, license files and web still run).
 NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sample.ts --in companies.csv --out results.csv.`,
       inputSchema: {
         source_table: z.string().optional().describe('Later: schema.table. This phase needs rows[].'),
@@ -116,6 +120,7 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
               city: z.string().optional(),
               state: z.string().min(2),
               domain: z.string().optional(),
+              phone: z.string().optional().describe('Business phone from Maps. Joins FMCSA, license and liquor files.'),
               website: z.string().optional().describe('Company website URL or host. Used for DBA + About fallback.'),
               address: z.string().optional().describe('Principal address. Used by the LLC unmask step.'),
               mailing_address: z.string().optional().describe('Parcel / tax-bill mailing address (e.g. permit-pulling parcels). Preferred by the LLC unmask step.'),
@@ -126,10 +131,10 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
         states: z
           .array(z.string())
           .optional()
-          .describe('Optional state codes. Default: the 31 officer-publishing jurisdictions.'),
+          .describe('Optional state codes. Default: the 41 jurisdictions with an official owner source.'),
         max_rows: z.number().int().min(1).max(5000).optional(),
         dry_run: z.boolean().optional().describe('Default true. This phase never writes to Supabase.'),
-        estimate_only: z.boolean().optional().describe('Cost + runtime envelope. No SOS calls.'),
+        estimate_only: z.boolean().optional().describe('Quote only: rows, per-state counts, Serper/Apify/unblocker ceilings. No fetches, no spend. Always run first.'),
         include_agents: z.boolean().optional().describe('Default false. Agents are never waterfall-ready.'),
         wait: z.boolean().optional().describe('Default true. If false, return job_id and poll get_business_owner_job.'),
         ca_batch: z

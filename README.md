@@ -4,42 +4,34 @@ Standalone US **small-business owner / officer** lookup. Input is `{ company_nam
 
 Moved out of [permit-pulling PR #47](https://github.com/joshuaosborn561-lang/permit-pulling/pull/47). This repo has **no permit, parcel, or calling-list code**.
 
-**Target:** ≥70% of small-business owners found, correct, and named across the **31 jurisdictions that publish officers**. Registered-agent-only states are skipped for now.
+**Target:** 60-70% of small-business owners named in every state. 41 jurisdictions have an official owner source (registry, open data, license or trade-name file); the 10 structurally agent-only states (CO OH NY WI MD NJ SC KS DE ME) run trade-name, license, national-overlay and web steps only. Plan and evidence: `OWNER_PLAN_2026-10.md`, `research/2026-10-25/`.
 
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `health` | Key flags, 31 officer states, skipped agent-only states |
-| `lookup_business_owner` | Batch lookup (`rows[]`). Counts / job_id / nameless samples. Never dump names. |
+| `health` | Key flags (Serper, Apify, unblocker, open data), 41 officer states, skipped agent-only states |
+| `lookup_business_owner` | Batch lookup (`rows[]`, pass `phone`). `estimate_only=true` first returns a `quote` (rows, per-state counts, Serper / Apify / unblocker ceilings); run only after approval. Counts / job_id / nameless samples. Never dump names. |
 | `get_business_owner_job` | Poll. Counts only. |
 
 HTTP: `POST /mcp` (Streamable HTTP), `GET /health`, `GET /mcp/health`. Stdio: `npm run mcp`.
 
 ## Lookup order
 
-1. **DBA → legal name** (Serper-first): site footer / privacy / terms / copyright, then `"<name>" <city> LLC OR Inc`, then Google Maps/GBP, then free county fictitious-business-name snippets. Passes the input `website` column through.
-2. **Serper owner** for every state. High confidence (≥0.8) can skip SOS. Sunbiz snippets drop dates/labels and normalize LAST FIRST.
-3. **Official SOS** after a Serper miss, including free HTML/bulk for **TX, GA, IL, MN, UT, WA**. **CA hybrid:** `dz_omar/california-bizfile-scraper` then `apify/web-fetch` SI PDFs. CA prefers owner/CEO/President over CFO. Playwright UI is Incapsula-blocked (`ca_playwright` is opt-in).
-4. **Agent-only fallback:** About page (title-adjacent owner/President/CEO is accepted; otherwise needs LinkedIn/SOS) → Serper LinkedIn (`owner OR founder OR president` + company + city) → find-named-person HTTP if `FIND_NAMED_PERSON_URL` is set.
-5. **Hard-to-find** (topup `hard-to-find-dm-discovery`): `site:linkedin.com/in "{company}" (Owner OR Founder …)` and `"{company}" "owner"`. Accept only when the surname is in the company name or both agree; reject place/generic names; skip franchise brands. Off with `HARD_TO_FIND_ENABLED=false`.
-5b. **FL bulk**: `scripts/build_fl_sunbiz.py` builds sorted TSVs from the free Sunbiz quarterly corp + fictitious-name files (`FL_SUNBIZ_DIR`); lookups are a binary search, no Sunbiz HTTP. **IL LLC**: manager files from the IL DTA set (needs ~1.3 GB heap).
-5c. **LLC unmask by address** (from topup `skills/unmask-shell-llc`): only for shell-looking names (address-named, numbered, Holdings/Properties/etc.) with no waterfall-ready owner. Gets the entity's address (input `address` column, else Maps), lists the other businesses at that address, and runs the Serper owner search on the operator. ~2 Places + ≤8 search credits. Disable with `UNMASK_ENABLED=false`. Probe alone: `npx tsx scripts/unmask_probe.ts shells.csv out.csv`.
-6. Every person gets a **confidence band + 0–1 score**. Owner/President/CEO rank above VP/CFO on every route. Registered agents are never waterfall-ready.
+0. **Free public files** (`openDataSources.ts`, $0, no bot walls): national overlays first (FMCSA census by phone/name for anything with a USDOT number; NPPES authorized official for healthcare), then the state's files: PA officers (`xvd7-5r2c`), CO trade names, OR CCB `rmi_name`, NY DMV owner_name + NYC DOB, WA L&I principal, MO liquor OWN/PART/MGR, Chicago license owners, IL IDFPR, TX TABC (passes the LLC name on when the licensee is an entity), DC Basic Business License owner. FL Sunbiz + IL DTA bulk (incl. corp president/secretary) run in the official step. Off with `OPEN_DATA_ENABLED=false`.
+1. **DBA → legal name** (Serper-first): site footer / privacy / terms / copyright, then `"<name>" <city> LLC OR Inc`, then Google Maps/GBP, then free county fictitious-business-name snippets.
+2. **Serper owner** for every state. High confidence (≥0.8) can skip SOS.
+3. **Official registry** after a Serper miss. Open from a datacenter: TX Comptroller JSON, KY, WV, MN, AL, AR, NE, ID, NM, ND, RI, SD, VT, DE, DC. Bot-walled (GA NC UT MO MS MT HI AK NH MA NV WA WY MI AZ IA KS IN TN VA OR SC): routed through the **unblocker** (`unblocker.ts`, Zyte / Bright Data / ScrapingBee / ScraperAPI via `UNBLOCKER_*` env, charged to `TOTAL_MAX_USD`) before Apify. CA hybrid stays on Apify.
+4. **Agent-only fallback:** About page → Serper LinkedIn → find-named-person. Registered agents count only when the agent is a person at the business address or the surname is in the company name.
+5. **Hard-to-find** and **LLC unmask by address** as before.
 
-Prefer **Serper over Apify**. Never paid Store datasets. `TOTAL_MAX_USD` is the unified Apify + Serper cap (falls back to `APIFY_MAX_USD`). Apify is billed from each finished run (`usageTotalUsd` + pay-per-event). Serper is **$0.001**/query, **≤8 queries/company**, stop at 0.8. Direct SOS HTTP first (≤15s); residential proxy only for bot-block states; Apify only on 403 / captcha / Incapsula. TX Comptroller FTAS JSON and FL Sunbiz ByName are direct HTTP. Live probes: **≤5 companies**, `TOTAL_MAX_USD=3`.
+## Skip (structurally agent-only)
 
-## Skip (agent-only, later phase)
-
-`CO OH NY WI IA ND SD KS ID ME MD NJ IN TN AR AK DE MI NM SC`
-
-## Officer-publishing (31)
-
-`AL AZ CA CT DC FL GA HI IL KY LA MA MN MO MS MT NC NE NH NV OK OR PA RI TX UT VA VT WA WV WY`
+`CO OH NY WI MD NJ SC KS DE ME` — no officer data exists in the state. Trade-name files, license rosters, FMCSA/NPPES and the web cascade still run for these.
 
 ## Env
 
-See `.env.example`. Required for live work: `SERPER_API_KEY`. Optional: `APIFY_TOKEN`, `APIFY_MAX_USD`, `FIND_NAMED_PERSON_URL`, Supabase (writes off).
+See `.env.example`. Required for live work: `SERPER_API_KEY`. Recommended: `UNBLOCKER_PROVIDER` + `UNBLOCKER_API_KEY` (bot-walled registries). Optional: `APIFY_TOKEN`, `APIFY_MAX_USD`, `FIND_NAMED_PERSON_URL`, Supabase (writes off).
 
 ## Run
 

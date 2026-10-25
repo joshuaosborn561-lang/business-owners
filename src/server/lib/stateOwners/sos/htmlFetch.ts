@@ -16,6 +16,7 @@ import {
   type LookupContext,
 } from './context.js';
 import { apifyFetchHtml } from './apifyPlaywright.js';
+import { fetchViaUnblocker, unblockerConfigured, usesUnblocker } from './unblocker.js';
 import { catalogByCode } from './catalog.js';
 import { APIFY_USD_PER_BLOCKED_LOOKUP, companySpendKey } from './spend.js';
 import type { NameLookupInput } from './types.js';
@@ -72,6 +73,7 @@ export interface OfficialPage {
   apify_worthy?: boolean;
   timed_out?: boolean;
   via_proxy?: boolean;
+  via_unblocker?: boolean;
 }
 
 function asOfficial(opts: {
@@ -127,6 +129,27 @@ function canUseApify(
   if (spend.wouldExceed(APIFY_USD_PER_BLOCKED_LOOKUP)) return false;
   if (key && spend.remainingCompanyUsd(key) <= 0) return false;
   return true;
+}
+
+/**
+ * Unblocker lane: residential fetch API for bot-walled registries. Tried
+ * before Apify whenever the state is on the unblocker list and a key is set.
+ * Returns null when not applicable, refused, or the page is still a challenge.
+ */
+async function tryUnblocker(
+  url: string,
+  ctx: LookupContext | undefined,
+  state: string,
+  init: RequestInit | undefined,
+): Promise<OfficialPage | null> {
+  if (!usesUnblocker(state) || !unblockerConfigured(ctx)) return null;
+  const got = await fetchViaUnblocker(url, ctx, init);
+  if (!got || got.refused) return null;
+  const blocked = looksBlocked(got.status, got.body) || isChallengePage(got.body);
+  if (blocked || !got.body) {
+    return { status: got.status, body: '', url: got.url, via_apify: false, via_unblocker: true, blocked: true, usd: got.usd, apify_worthy: true };
+  }
+  return { status: got.status, body: got.body, url: got.url, via_apify: false, via_unblocker: true, blocked: false, usd: got.usd, apify_worthy: false };
 }
 
 export async function fetchOfficialPage(
@@ -240,6 +263,11 @@ export async function fetchOfficialPage(
         apify_worthy: false,
       };
     }
+    const viaUnblocker = await tryUnblocker(url, ctx, opts.state, opts.init);
+    if (viaUnblocker) {
+      ctx.companyKey = prevKey;
+      return viaUnblocker;
+    }
     if (!canUseApify(ctx, opts.input, opts.allowApify)) {
       ctx.companyKey = prevKey;
       return { status, body: '', url, via_apify: false, blocked: true, usd: 0, apify_worthy: true };
@@ -248,7 +276,14 @@ export async function fetchOfficialPage(
     const timedOut = isTimeoutError(err) || lookupDeadlineExceeded(ctx);
     // Registries unreachable from this network (WAF drop / no route): go
     // straight to the Apify residential fetch when the budget allows.
-    const unreachable = BOX_UNREACHABLE_STATES.has(opts.state) && !lookupDeadlineExceeded(ctx);
+    const unreachable = (BOX_UNREACHABLE_STATES.has(opts.state) || usesUnblocker(opts.state)) && !lookupDeadlineExceeded(ctx);
+    if (unreachable) {
+      const viaUnblocker = await tryUnblocker(url, ctx, opts.state, opts.init);
+      if (viaUnblocker) {
+        ctx.companyKey = prevKey;
+        return viaUnblocker;
+      }
+    }
     if (unreachable && canUseApify(ctx, opts.input, opts.allowApify)) {
       try {
         const got = await apifyFetchHtml(url, ctx, { preferWebFetch: false });

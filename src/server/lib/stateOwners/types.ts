@@ -28,6 +28,7 @@ export type CoverageReason = (typeof COVERAGE_REASONS)[number];
 
 export const BOARD_SOURCES = [
   'sunbiz',
+  'open_data',
   'tx_sos',
   'ny_dos',
   'ma_sos',

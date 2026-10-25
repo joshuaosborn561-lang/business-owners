@@ -1,7 +1,7 @@
 /**
  * Free state open-data (Socrata) owner sources, queried live (no bulk load):
  *  CT  data.ct.gov Business Master (n7gp-d28j) → Principals (ka36-64k6)
- *  OR  data.oregon.gov Active Businesses (tckn-sxa6): authorized representative / RA
+ *  OR  data.oregon.gov Active Businesses (tckn-sxa6): assumed-business-name owner (authorized representative) / person RA; no LLC members exist in the extract
  *  CO  data.colorado.gov Business Entities (4ykn-tg5h): registered agent (person-RA rule)
  *  NY  data.ny.gov Active Corporations (n9v6-gdp6): DOS process name (person-RA rule)
  */
@@ -71,8 +71,13 @@ export async function resolveSodaState(input: NameLookupInput, ctx?: LookupConte
     const reg = regs.length === 1 ? regs[0] : rows.find((r) => r.associated_name_type === 'PRINCIPAL PLACE OF BUSINESS' && String(r.city || '').toUpperCase() === city)?.registry_number;
     if (!reg) return null;
     const mine = rows.filter((r) => r.registry_number === reg);
-    const rep = mine.find((r) => r.associated_name_type === 'AUTHORIZED REPRESENTATIVE' && r.last_name);
-    if (rep) return ok(input, [{ name: name(rep.first_name, rep.last_name), title: 'Authorized Representative', role: 'owner', labeled: true }], url, true);
+    // Verified 2026-10-25: the open registry has no member/manager/officer rows at all. The only
+    // person rows are AUTHORIZED REPRESENTATIVE (always on an ASSUMED BUSINESS NAME = the DBA
+    // owner) and REGISTERED AGENT. Accept the representative only on an assumed business name.
+    const rep = mine.find(
+      (r) => r.associated_name_type === 'AUTHORIZED REPRESENTATIVE' && r.last_name && /ASSUMED BUSINESS NAME/i.test(r.entity_type || ''),
+    );
+    if (rep) return ok(input, [{ name: name(rep.first_name, rep.last_name), title: 'Owner (assumed business name)', role: 'owner', labeled: true }], url, true);
     const ra = mine.find((r) => r.associated_name_type === 'REGISTERED AGENT' && r.last_name);
     const ppb = mine.find((r) => r.associated_name_type === 'PRINCIPAL PLACE OF BUSINESS');
     const p = ra ? promoteAgentCandidate(input, name(ra.first_name, ra.last_name), 'us_sos', url, { agentAddress: ra.address, businessAddress: ppb?.address }) : null;

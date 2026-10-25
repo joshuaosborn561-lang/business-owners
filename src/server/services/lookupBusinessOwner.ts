@@ -37,6 +37,8 @@ import {
   estimateSerperUsd,
 } from '../lib/stateOwners/sos/spend.js';
 import { isWaterfallReady } from '../lib/stateOwners/sos/waterfall.js';
+import { UNBLOCKER_STATES, unblockerConfigured, unblockerUsdPerLookup } from '../lib/stateOwners/sos/unblocker.js';
+import { openDataSourcesFor } from '../lib/stateOwners/sos/openDataSources.js';
 
 export { APIFY_USD_PER_BLOCKED_LOOKUP };
 export const SOS_HTTP_LANES = LOOKUP_CONCURRENCY_DEFAULT;
@@ -106,6 +108,41 @@ export function estimateApifyUsd(
     }
   }
   return Number((blocked * APIFY_USD_PER_BLOCKED_LOOKUP).toFixed(2));
+}
+
+/** Rows whose registry is bot-walled and routed through the unblocker (only when a key is set). */
+export function estimateUnblockerUsd(inputs: NameLookupInput[]): number {
+  if (!unblockerConfigured()) return 0;
+  const per = unblockerUsdPerLookup();
+  const n = inputs.filter((row) => UNBLOCKER_STATES.has(normalizeState(row.state))).length;
+  return Number((n * per).toFixed(2));
+}
+
+export function quoteForRows(inputs: NameLookupInput[], opts?: { ca_batch?: boolean; ca_hybrid_only?: boolean; ca_max_results?: number }): Record<string, unknown> {
+  const n = inputs.length;
+  const apify = estimateApifyUsd(inputs, opts);
+  const serper = estimateSerperUsd(n);
+  const unblocker = estimateUnblockerUsd(inputs);
+  const total = Number((apify + serper + unblocker).toFixed(2));
+  const byState: Record<string, number> = {};
+  for (const row of inputs) {
+    const st = normalizeState(row.state) || 'UNK';
+    byState[st] = (byState[st] || 0) + 1;
+  }
+  const freeFirst = inputs.filter((row) => openDataSourcesFor(row.state).length > 2).length;
+  return {
+    rows: n,
+    rows_by_state: byState,
+    rows_with_state_open_data: freeFirst,
+    serper_usd_max: serper,
+    apify_usd_max: apify,
+    unblocker_usd_max: unblocker,
+    unblocker_configured: unblockerConfigured(),
+    total_usd_max: total,
+    per_row_usd_max: n ? Number((total / n).toFixed(4)) : 0,
+    note:
+      'Ceiling, not a bill: free open-data and bulk files run first at $0; Serper, the unblocker and Apify are charged only on rows those miss. Expect roughly a third to a half of the ceiling.',
+  };
 }
 
 export function estimateRuntimeSeconds(rowCount: number, lanes = SOS_HTTP_LANES): number {
@@ -196,6 +233,10 @@ function emptySnapshot(
     serper_credits: 0,
     serper_usd: 0,
     via_serper: 0,
+    unblocker_estimate_usd: 0,
+    unblocker_usd: 0,
+    unblocker_requests: 0,
+    via_open_data: 0,
     ocr_used: 0,
     writes_enabled: WRITES_ENABLED,
     phase: OWNER_LOOKUP_PHASE,
@@ -228,6 +269,7 @@ function applyLookupHit(
   if (result.coverage_reason === 'agent_only') snapshot.agent_only += 1;
   if (result.via_apify) snapshot.via_apify += 1;
   if (result.via_serper || (result.serper_credits || 0) > 0) snapshot.via_serper += 1;
+  if (result.source === 'open_data') snapshot.via_open_data = (snapshot.via_open_data || 0) + 1;
   if (result.ocr_used) snapshot.ocr_used += 1;
   snapshot.apify_usd_spent = Number((snapshot.apify_usd_spent + (result.apify_usd || 0)).toFixed(4));
   snapshot.serper_credits += result.serper_credits || 0;
@@ -274,6 +316,8 @@ async function runLookupJob(
         snapshot.serper_credits = ctx.serper.credits;
         snapshot.serper_usd = ctx.serper.usd;
       }
+      snapshot.unblocker_usd = Number((ctx.spend?.unblockerUsd ?? 0).toFixed(4));
+      snapshot.unblocker_requests = ctx.spend?.unblockerRequests ?? 0;
       snapshot.sample = samples.slice();
       putJob(snapshot);
     };
@@ -358,6 +402,7 @@ export async function lookupBusinessOwner(opts: LookupBusinessOwnerOpts): Promis
     const serperCredits = estimateSerperCredits(serperN);
     const serperUsd = estimateSerperUsd(serperN);
     const snapshot = emptySnapshot(jobId, opts, 0, apifyUsd, serperCredits, serperUsd);
+    snapshot.unblocker_estimate_usd = estimateUnblockerUsd(rows);
     snapshot.status = 'completed';
     snapshot.estimate_only = true;
     snapshot.processed = 0;
@@ -367,6 +412,8 @@ export async function lookupBusinessOwner(opts: LookupBusinessOwnerOpts): Promis
     return {
       ok: true,
       ...snapshot,
+      quote: quoteForRows(rows, { ca_batch: caBatch, ca_hybrid_only: hybridOnly, ca_max_results: opts.ca_max_results }),
+      requires_approval: true,
       rows_in_payload: rows.length,
       source_table: opts.source_table || null,
       where: opts.where ? '(redacted)' : null,
@@ -384,7 +431,7 @@ export async function lookupBusinessOwner(opts: LookupBusinessOwnerOpts): Promis
         'Illinois Data Transparency Act bulk zips auto-download from ilsos.gov/data/bs (or set IL_DTA_DIR). Search UI scrape is forbidden; missing files are no_source.',
       ],
       assistant_instructions:
-        'Phase 2 estimate only. No SOS calls. No writes. Do not dump company names. Show Serper credits/$, Apify fallback envelope, and IL-file setup. CA has no API key (calicodev is government-only).',
+        'Estimate only, nothing was fetched or spent. Show the user `quote` (rows, total_usd_max, per_row_usd_max, unblocker_configured) and ask for approval. Run the same call with estimate_only=false only after they approve. Do not dump company names.',
     };
   }
 
@@ -423,6 +470,7 @@ export async function lookupBusinessOwner(opts: LookupBusinessOwnerOpts): Promis
     estimateSerperCredits(serperN),
     estimateSerperUsd(serperN),
   );
+  snapshot.unblocker_estimate_usd = estimateUnblockerUsd(rows);
   snapshot.status = 'running';
   putJob(snapshot);
 

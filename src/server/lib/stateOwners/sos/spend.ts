@@ -19,6 +19,10 @@ export const SERPER_USD_PER_QUERY = 0.001;
 export const SERPER_QUERIES_PER_COMPANY = 8;
 /** Estimate: officer query + a few site/DBA lookups, never more than the per-company cap. */
 export const SERPER_QUERIES_PER_ROW = SERPER_QUERIES_PER_COMPANY;
+/** Unblocker (Zyte / Bright Data / ScrapingBee) default price per rendered request; override with UNBLOCKER_USD_PER_REQUEST. */
+export const UNBLOCKER_USD_PER_REQUEST_DEFAULT = 0.004;
+/** A registry lookup is a search page plus a detail page. */
+export const UNBLOCKER_REQUESTS_PER_LOOKUP = 2;
 
 export function apifyMaxUsdFromEnv(): number | null {
   const raw = process.env.APIFY_MAX_USD?.trim();
@@ -73,6 +77,8 @@ interface PersistShape {
   refused: number;
   serperCredits: number;
   serperQueries: number;
+  unblockerUsd?: number;
+  unblockerRequests?: number;
   companies: Record<string, number>;
   serperCompanies: Record<string, number>;
 }
@@ -137,6 +143,8 @@ export class ApifySpendTracker {
   apifyUsd = 0;
   serperCredits = 0;
   serperQueries = 0;
+  unblockerUsd = 0;
+  unblockerRequests = 0;
   runs = 0;
   lookups = 0;
   computeUnits = 0;
@@ -171,6 +179,8 @@ export class ApifySpendTracker {
       this.apifyUsd = Number(raw.apifyUsd) || (raw.serperCredits ? 0 : this.usd);
       this.serperCredits = Number(raw.serperCredits) || 0;
       this.serperQueries = Number(raw.serperQueries) || this.serperCredits;
+      this.unblockerUsd = Number(raw.unblockerUsd) || 0;
+      this.unblockerRequests = Number(raw.unblockerRequests) || 0;
       this.runs = Number(raw.runs) || 0;
       this.lookups = Number(raw.lookups) || 0;
       this.computeUnits = Number(raw.computeUnits) || 0;
@@ -203,6 +213,8 @@ export class ApifySpendTracker {
       refused: this.refused,
       serperCredits: this.serperCredits,
       serperQueries: this.serperQueries,
+      unblockerUsd: this.unblockerUsd,
+      unblockerRequests: this.unblockerRequests,
       companies: Object.fromEntries(this.companies),
       serperCompanies: Object.fromEntries(this.serperCompanies),
     };
@@ -273,6 +285,29 @@ export class ApifySpendTracker {
       if (companyKey && (this.companies.get(companyKey) || 0) >= this.companyCapUsd) return false;
       this.usd = Number((this.usd + extra).toFixed(4));
       this.apifyUsd = Number((this.apifyUsd + extra).toFixed(4));
+      if (companyKey) {
+        this.companies.set(companyKey, Number(((this.companies.get(companyKey) || 0) + extra).toFixed(4)));
+      }
+      this.flush();
+      return true;
+    });
+  }
+
+  /**
+   * Charge one unblocker request (residential fetch API) against the same
+   * TOTAL_MAX_USD ledger and the per-company ceiling. Returns false (and the
+   * caller must not call the vendor) when either cap would be exceeded.
+   */
+  reserveUnblocker(usd: number, companyKey?: string | null): boolean {
+    const extra = Number(usd) || 0;
+    if (extra <= 0) return true;
+    return this.locked(() => {
+      this.hydrate();
+      if (this.capUsd != null && this.usd + extra > this.capUsd) return false;
+      if (companyKey && (this.companies.get(companyKey) || 0) >= this.companyCapUsd) return false;
+      this.usd = Number((this.usd + extra).toFixed(4));
+      this.unblockerUsd = Number((this.unblockerUsd + extra).toFixed(4));
+      this.unblockerRequests += 1;
       if (companyKey) {
         this.companies.set(companyKey, Number(((this.companies.get(companyKey) || 0) + extra).toFixed(4)));
       }

@@ -35,11 +35,11 @@ describe('STATE_SOS_CATALOG', () => {
     assert.equal(byCode.get('CO')?.apify, 'never');
   });
 
-  it('lists 31 officer-publishing jurisdictions and 20 skipped agent-only states', () => {
+  it('lists 41 officer-publishing jurisdictions and 10 structurally agent-only states', () => {
     const officer = OFFICER_PUBLISHING_CODES as readonly string[];
-    assert.equal(OFFICER_PUBLISHING_CODES.length, 31);
-    assert.equal(AGENT_ONLY_SKIP_CODES.length, 20);
-    assert.equal(catalogOfficerPublishing().length, 31);
+    assert.equal(OFFICER_PUBLISHING_CODES.length, 41);
+    assert.equal(AGENT_ONLY_SKIP_CODES.length, 10);
+    assert.equal(catalogOfficerPublishing().length, 41);
     assert.ok(!officer.includes('CO'));
     assert.ok(!officer.includes('OH'));
     assert.ok(officer.includes('CA'));

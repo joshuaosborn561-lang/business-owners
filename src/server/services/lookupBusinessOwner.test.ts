@@ -91,9 +91,9 @@ describe('lookup_business_owner scaffold', () => {
 });
 
 describe('officer-publishing rollout', () => {
-  it('covers 31 jurisdictions and skips the 20 agent-only states', () => {
-    assert.equal(OFFICER_PUBLISHING_CODES.length, 31);
-    assert.equal(AGENT_ONLY_SKIP_CODES.length, 20);
+  it('covers 41 jurisdictions and skips the 10 agent-only states', () => {
+    assert.equal(OFFICER_PUBLISHING_CODES.length, 41);
+    assert.equal(AGENT_ONLY_SKIP_CODES.length, 10);
     const officer = OFFICER_PUBLISHING_CODES as readonly string[];
     assert.ok(officer.includes('CA'));
     assert.ok(officer.includes('DC'));

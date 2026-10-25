@@ -21,6 +21,7 @@ const SOURCE_BASE: Partial<Record<BoardSource, number>> = {
   tx_sos: 0.86,
   ma_sos: 0.84,
   pa_dos: 0.84,
+  open_data: 0.84,
   serper: 0.62,
   website: 0.55,
   dba: 0.55,

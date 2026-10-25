@@ -271,3 +271,18 @@ Implication for the loaders: every bulk load needs the full roster and address c
 | CPAs and accounting firms | State boards of accountancy firm + individual rosters: FL DBPR CPA extract (verified free CSV), WA `fnp9-sdhr` (verified), IL IDFPR (public accounting firms, verified dataset), TX TSBPA, CA CBA, NY OP, plus CT eLicense. NASBA CPAverify is lookup-only. Firm license names the licensee-in-charge; small firms carry the surname. | Partly verified (FL, WA, IL, CT). Other boards not researched this round. |
 
 Add to Phase 0: verify the CMS all-owners datasets and the TX/FL/CA insurance producer files, since both are likely free bulk with owner names attached.
+
+---
+
+## 13. Build status (Oct 25 2026)
+
+Shipped in this repo on branch `ccr-c310b674-4icgep`:
+
+- `openDataSources.ts`: 13 free sources wired before Serper (PA officers, CO trade names, OR CCB, NY DMV, NYC DOB, WA L&I, MO liquor, Chicago owners, IL IDFPR, TX TABC, DC BBL, FMCSA, NPPES). Phone is now an input field and the primary join key for FMCSA, L&I, CCB, TABC and NPPES. Confidence and waterfall-ready rules are shared with the SOS adapters; non-owner NPPES titles are flagged for review.
+- `unblocker.ts`: residential fetch API lane (Zyte, Bright Data, ScrapingBee, ScraperAPI) for the 22 bot-walled registries, tried before Apify, every request reserved against `TOTAL_MAX_USD` and the per-company ceiling, reported as `unblocker_usd` on the job.
+- Quote gate: `estimate_only=true` returns `quote` (rows by state, Serper / Apify / unblocker ceilings, per-row max) and `requires_approval`; the MCP description tells the assistant to show it and wait.
+- Illinois: corp Master president/secretary fields parsed (incorporators flagged), `cdxallmst.zip` added to the download set.
+- Oregon: authorized representative accepted only on assumed business names; person-RA promotion otherwise.
+- Catalog: KY, MN, DC URLs; PA as open data; AK, IN, MI, DC marked officer-bearing; skip list reduced to the 10 structurally agent-only states; 41 jurisdictions in scope.
+
+Not yet built: bulk loaders for purchased files (MN, RI, AZ, OK, ND, NC, MT), Supabase tables for Mode 2 enumeration, Iowa 1052 (the Iowa data hub is no longer Socrata), CT license/liquor files, PPP address match, BBB/D&B snippet mining.
