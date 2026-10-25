@@ -224,3 +224,33 @@ Full detail: `research/2026-10-25/paid-vendors.md`.
 ## 10. Handoff
 
 Every hit written for the waterfall carries: first_name, last_name, title, company_name (legal and trade), domain, source, source_url or dataset id, source_date, confidence_score, state, and the match key used. Email Finder Waterfall `name_company` mode consumes it unchanged. Where a source already supplies an email or phone (FMCSA, NPPES authorized-official phone, MN DLI, IA 1052, CT business email, RI trade names, NYC DOB), pass it through as a candidate so the waterfall can verify instead of buy.
+
+---
+
+## 11. Two modes of use
+
+**Mode 1, enrichment after a Maps scrape.** Input is a Maps row (name, address, phone, domain). Output is the owner. This is everything in sections 2 to 6: local bulk match first, overlays, live registries, web, paid.
+
+**Mode 2, independent owner list, then Jev grades for ICP.** No Maps scrape. The loaded files are the lead source: enumerate every business in a zip set or NAICS/purpose range that already carries an owner name, resolve the domain, and send the list to the ICP website gate. Only owner-bearing files qualify as a source here. Agent-only files (CO, IA, NY, ND entity lists, WI, MD) cannot seed this mode.
+
+What qualifies as a Mode 2 source today:
+
+| Source | Enumerable by | Owner attached | Filterable by vertical |
+|---|---|---|---|
+| PA `xvd7-5r2c` | county, zip, entity type | yes | no NAICS; use name keywords |
+| IL DTA corp + LLC files | zip, county | yes (pres/sec, managers) | yes: corp intent codes (construction, personal services, restaurant, auto repair), LLC IRS 1065 purpose code |
+| FL Sunbiz cor + fic | city, zip | yes (6 officers, 10 DBA owners) | no; name keywords |
+| CT principals + master | city, zip | yes | yes: master has NAICS and business email |
+| TX `9cir-efmm` + Comptroller JSON | zip, NAICS | yes, one JSON call per entity | yes: NAICS on the Socrata file |
+| DC BBL | ward, address, business activity | yes (44% of active) | yes: license category |
+| Chicago licenses + owners | zip, license description | yes | yes |
+| MN DLI, IA 1052, WA L&I, OR CCB, CSLB personnel, TDLR, NYC DOB, MN/RI/AZ/OK/ND purchases | zip, license type | yes | yes: license type is the vertical |
+| FMCSA census | zip, cargo flags, power units | yes, plus email and cell | yes: trucking, towing, moving, dump |
+| NPPES Type-2 | zip, taxonomy | yes, plus phone | yes: dental, chiro, PT, pharmacy, optometry |
+| PPP (sole props) | zip, NAICS | yes (borrower is the person) | yes: NAICS |
+| Liquor files (TX, CA, MO, NE, CT, FL) | city | MO/NE/CT yes; TX/CA/FL licensee entity | yes: hospitality |
+| Trade-name files (CO, OR, MN, MT, ND, RI, OK) | city, zip | yes (registrant) | no; name keywords |
+
+Mode 2 output per row: company legal name, trade name, address, owner first/last/title, source + date, domain (resolve via Domain Finder Waterfall or DiscoLike bulk match), then Jev. The confidence rules in section 6 still apply; a Mode 2 list should carry only high-confidence owners, because nothing downstream re-checks the name.
+
+Implication for the loaders: every bulk load needs the full roster and address columns indexed for range queries (zip, city, type, NAICS/purpose), not just a name key. Store the files in Supabase tables with a shared shape (`bo_entities`, `bo_people`, `bo_trade_names`, `bo_licenses`) so one query serves both modes.
