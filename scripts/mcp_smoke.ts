@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { parseCsvLine } from '../src/server/lib/stateOwners/sos/sampleCsv.js';
 
-const URL_ = process.env.MCP_URL || 'https://permitstack-mcp-production.up.railway.app/mcp';
+const URL_ = process.env.MCP_URL || 'https://business-owners.up.railway.app/mcp';
 const args = process.argv.slice(2);
 const inPath = args[args.indexOf('--in') + 1];
 const run = args.includes('--run');
