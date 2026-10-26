@@ -11,6 +11,7 @@ import {
 } from '../server/lib/stateOwners/sos/index.js';
 import {
   getBusinessOwnerJob,
+  getOwnerResults,
   lookupBusinessOwner,
 } from '../server/services/lookupBusinessOwner.js';
 import { GUIDE_MARKDOWN, SERVER_INSTRUCTIONS, WHEN_TO_USE_MARKDOWN } from './instructions.js';
@@ -45,11 +46,13 @@ export function healthPayload() {
     writes_enabled: config.writesEnabled,
     officer_publishing_states: [...OFFICER_PUBLISHING_CODES],
     skipped_agent_only_states: [...AGENT_ONLY_SKIP_CODES],
-    tools: ['health', 'lookup_business_owner', 'get_business_owner_job'],
+    tools: ['health', 'lookup_business_owner', 'get_business_owner_job', 'get_owner_results'],
+    results_table: 'business_owners.owner_hits',
+    results_db_configured: Boolean(process.env.BO_SUPABASE_URL && process.env.BO_SUPABASE_KEY && process.env.BO_REGISTRY_TOKEN),
     when_to_use:
       'Company name + city + state owner/officer lookup for Email Finder name_company mode. No permit number.',
     when_not_to_use:
-      'Permits, parcels, calling lists, paid SOS datasets, registered-agent-only states.',
+      'Permits, parcels, calling lists.',
   };
 }
 
@@ -60,7 +63,7 @@ export function createBusinessOwnersMcpServer(): McpServer {
       version: '0.1.0',
       title: 'Business Owners MCP',
       description:
-        'USE FOR: US small-business owner/officer lookup from company + city + state. DO NOT USE FOR: permits, parcels, paid SOS datasets. Prefer Serper over Apify. Never dump officer names.',
+        'USE FOR: US small-business owner/officer lookup from company + city + state. DO NOT USE FOR: permits, parcels. Returns owner first/last name + title for Email Finder Waterfall name_company mode.',
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
@@ -107,7 +110,7 @@ export function createBusinessOwnersMcpServer(): McpServer {
     {
       title: 'Lookup US business owners by company + city + state',
       description: `WHEN TO USE: Need an owner/officer name with no permit or license number. Input is company name + city + state (optional domain).
-WHAT IT DOES: DBA→legal name (website footer/privacy/terms/copyright, Serper LLC/Inc query, Maps/GBP, free county FBN) → Serper owner → official SOS (CA hybrid dz_omar + web-fetch SI PDFs) → agent fallback (About page, LinkedIn Serper, find-named-person). Prefer Serper over Apify. APIFY_MAX_USD is a hard cap. Never paid datasets. estimate_only quotes credits/$. ca_batch defaults to hybrid-only. Counts, job_id, per-state hit rates, nameless samples, confidence. Never dump names.
+WHAT IT DOES: DBA→legal name (website footer/privacy/terms/copyright, Serper LLC/Inc query, Maps/GBP, free county FBN) → Serper owner → official SOS (CA hybrid dz_omar + web-fetch SI PDFs) → agent fallback (About page, LinkedIn Serper, find-named-person). Prefer Serper over Apify. APIFY_MAX_USD is a hard cap. Never paid datasets. estimate_only quotes credits/$. ca_batch defaults to hybrid-only. RETURNS: owners[] (first_name, last_name, title, company, domain, source, confidence) plus counts, cost and per-state hit rates. Every result is saved to business_owners.owner_hits; get_owner_results pages the rest or returns CSV.
 ORDER: free open data first (PA officers, FMCSA by phone, NPPES, state license / liquor / trade-name files, FL + IL bulk) → Serper → official registry (unblocker lane for bot-walled states when UNBLOCKER_API_KEY is set) → About/LinkedIn → unmask. Pass phone from the Maps row: it is the strongest join key.\nQUOTE FIRST: call with estimate_only=true, show quote.total_usd_max to the user, and run only after they approve.\nSKIP STATES: CO OH NY WI MD NJ SC KS DE ME (no officer data exists; trade names, license files and web still run).
 NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sample.ts --in companies.csv --out results.csv.`,
       inputSchema: {
@@ -133,7 +136,9 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
           .optional()
           .describe('Optional state codes. Default: the 41 jurisdictions with an official owner source.'),
         max_rows: z.number().int().min(1).max(5000).optional(),
-        dry_run: z.boolean().optional().describe('Default true. This phase never writes to Supabase.'),
+        dry_run: z.boolean().optional().describe('Ignored; results are always saved.'),
+        client_tag: z.string().optional().describe('Tag results (e.g. a client name) so get_owner_results can pull them by client.'),
+        inline_limit: z.number().int().min(0).max(1000).optional().describe('Owners returned inline in the reply. Default 200.'),
         estimate_only: z.boolean().optional().describe('Quote only: rows, per-state counts, Serper/Apify/unblocker ceilings. No fetches, no spend. Always run first.'),
         include_agents: z.boolean().optional().describe('Default false. Agents are never waterfall-ready.'),
         wait: z.boolean().optional().describe('Default true. If false, return job_id and poll get_business_owner_job.'),
@@ -144,7 +149,7 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
         ca_hybrid_only: z.boolean().optional().describe('Default true with ca_batch: skip Playwright.'),
         ca_playwright: z.boolean().optional().describe('Opt into the Incapsula-blocked Playwright UI path.'),
         ca_max_results: z.number().int().min(1).max(50).optional().describe('dz_omar maxResultsPerQuery. Default 3.'),
-        ca_debug: z.boolean().optional().describe('Log per-step HTTP status. Do not dump names.'),
+        ca_debug: z.boolean().optional().describe('Log per-step HTTP status.'),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -162,7 +167,7 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
     {
       title: 'Business owner lookup — job status',
       description:
-        'Poll lookup_business_owner. Returns status, processed/named/agent_only, remaining, per-state hit rates, serper_credits, apify_usd_spent. Never names.',
+        'Poll lookup_business_owner. Returns status, processed/named, remaining, per-state hit rates, spend, owners_available. When completed, call get_owner_results.',
       inputSchema: { job_id: z.string().min(1) },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -171,6 +176,31 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
         return jsonResult(await getBusinessOwnerJob(args.job_id));
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : 'get_business_owner_job failed');
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_owner_results',
+    {
+      title: 'Business owner lookup — owner names',
+      description:
+        'Owner names from a lookup job (or every job for a client_tag): first_name, last_name, title, company, legal_name, domain, phone, owner_email/owner_phone when a public file had one, source, confidence. Default only waterfall-ready owners; only_named=false includes misses. format=csv returns a CSV string. Page with limit/offset (max 5000).',
+      inputSchema: {
+        job_id: z.string().optional(),
+        client_tag: z.string().optional(),
+        only_named: z.boolean().optional().describe('Default true: only owners ready for the email waterfall.'),
+        format: z.enum(['json', 'csv']).optional(),
+        limit: z.number().int().min(1).max(5000).optional(),
+        offset: z.number().int().min(0).optional(),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await getOwnerResults(args));
+      } catch (err) {
+        return errorResult(err instanceof Error ? err.message : 'get_owner_results failed');
       }
     },
   );

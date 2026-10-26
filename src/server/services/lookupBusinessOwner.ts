@@ -39,13 +39,24 @@ import {
 import { isWaterfallReady } from '../lib/stateOwners/sos/waterfall.js';
 import { UNBLOCKER_STATES, unblockerConfigured, unblockerUsdPerLookup } from '../lib/stateOwners/sos/unblocker.js';
 import { openDataSourcesFor } from '../lib/stateOwners/sos/openDataSources.js';
+import {
+  fetchOwnerHits,
+  memoryOwnerHits,
+  ownerHitForReply,
+  ownerHitsCsv,
+  ownerHitsDbConfigured,
+  rememberOwnerHit,
+  saveOwnerHits,
+  toOwnerHitRow,
+  type OwnerHitRow,
+} from '../lib/stateOwners/sos/ownerHits.js';
 
 export { APIFY_USD_PER_BLOCKED_LOOKUP };
 export const SOS_HTTP_LANES = LOOKUP_CONCURRENCY_DEFAULT;
 /** Existing write gate. Keep well under the 60-connection project cap. */
 export const OWNER_LOOKUP_WRITE_CONCURRENCY = 4;
-/** Phase 2 still does not persist people. CLI and MCP are counts / local CSV only. */
-export const WRITES_ENABLED = false;
+/** Owner results are saved per row (memory + business_owners.owner_hits) and returned to the caller. */
+export const WRITES_ENABLED = true;
 /** @deprecated use WRITES_ENABLED */
 export const PHASE1_WRITES_ENABLED = WRITES_ENABLED;
 export const OWNER_LOOKUP_PHASE = 3;
@@ -65,6 +76,10 @@ export interface LookupBusinessOwnerOpts {
   estimate_only?: boolean;
   include_agents?: boolean;
   job_id?: string;
+  /** Tag results for a client so they can be pulled later by client. */
+  client_tag?: string;
+  /** Owners returned inline in the reply (default 200). The rest: get_owner_results. */
+  inline_limit?: number;
   wait?: boolean;
   context?: LookupContext;
   concurrency?: number;
@@ -307,7 +322,26 @@ async function runLookupJob(
     if (opts.ca_debug === true) snapshot.ca_debug = true;
     const caRows = caBatch ? rows.filter((row) => normalizeState(row.state) === 'CA') : [];
     const otherRows = caBatch ? rows.filter((row) => normalizeState(row.state) !== 'CA') : rows;
+    const clientTag = opts.client_tag?.trim() || null;
+    let pending: OwnerHitRow[] = [];
+    let saving: Promise<void> = Promise.resolve();
+    snapshot.results_saved = 0;
+    snapshot.results_db = ownerHitsDbConfigured();
+    const flush = () => {
+      if (!pending.length) return;
+      const batch = pending;
+      pending = [];
+      saving = saving.then(async () => {
+        const got = await saveOwnerHits(batch);
+        snapshot.results_saved = (snapshot.results_saved || 0) + got.written;
+        if (got.error) snapshot.results_save_error = got.error;
+      });
+    };
     const record = (row: NameLookupInput, result: NameLookupResult) => {
+      const hit = toOwnerHitRow(snapshot.job_id, clientTag, row, result);
+      rememberOwnerHit(hit);
+      pending.push(hit);
+      if (pending.length >= 25) flush();
       applyLookupHit(snapshot, row, result, samples, rows.length);
       snapshot.apify_usd_spent = Number((ctx.spend?.apifyUsd ?? ctx.spend?.usd ?? snapshot.apify_usd_spent).toFixed(2));
       snapshot.apify_compute_units = Number((ctx.spend?.computeUnits ?? 0).toFixed(4));
@@ -353,6 +387,8 @@ async function runLookupJob(
         },
       );
     }
+    flush();
+    await saving;
     snapshot.sample = samples;
     snapshot.apify_usd_spent = Number((ctx.spend?.apifyUsd ?? ctx.spend?.usd ?? snapshot.apify_usd_spent).toFixed(2));
     snapshot.apify_compute_units = Number((ctx.spend?.computeUnits ?? snapshot.apify_compute_units ?? 0).toFixed(4));
@@ -480,19 +516,27 @@ export async function lookupBusinessOwner(opts: LookupBusinessOwnerOpts): Promis
     return {
       ok: true,
       ...getJob(jobId),
-      assistant_instructions: 'Job running. Poll get_business_owner_job. Counts only. No Supabase writes.',
+      assistant_instructions: 'Job running. Poll get_business_owner_job; when completed, call get_owner_results(job_id) for the owners (or format=csv for a file).',
     };
   }
 
   const done = await runLookupJob(snapshot, rows, opts);
+  const all = memoryOwnerHits(jobId) || [];
+  const named = all.filter((r) => r.waterfall_ready);
+  const inlineLimit = Math.max(0, Math.min(opts.inline_limit ?? 200, 1000));
   return {
     ok: done.status !== 'failed',
     ...done,
     dry_run: dryRun,
     writes_enabled: WRITES_ENABLED,
-    assistant_instructions: dryRun
-      ? 'Dry lookup. Counts only. No Supabase writes. No permit/license path in this service.'
-      : 'Phase 2 refuses production writes. Re-run dry_run=true. Persist is a later PR.',
+    owners: named.slice(0, inlineLimit).map(ownerHitForReply),
+    owners_returned: Math.min(named.length, inlineLimit),
+    owners_total: named.length,
+    misses: all.length - named.length,
+    assistant_instructions:
+      named.length > inlineLimit
+        ? `First ${inlineLimit} owners are inline. Call get_owner_results(job_id, offset=${inlineLimit}) for the rest, or format=csv for a file. Feed owners to Email Finder Waterfall as name_company rows (first_name, last_name, company_name, domain).`
+        : 'Owners are in `owners`. Feed them to Email Finder Waterfall as name_company rows (first_name, last_name, company_name, domain). get_owner_results(job_id, format=csv) returns a CSV.',
   };
 }
 
@@ -504,6 +548,30 @@ export async function getBusinessOwnerJob(jobId: string): Promise<Record<string,
   return {
     ok: true,
     ...row,
-    assistant_instructions: 'Counts and status only. Do not dump names.',
+    owners_available: (memoryOwnerHits(id) || []).filter((r) => r.waterfall_ready).length,
+    assistant_instructions: 'When status is completed, call get_owner_results(job_id) for the owner names.',
   };
+}
+
+export async function getOwnerResults(args: {
+  job_id?: string;
+  client_tag?: string;
+  only_named?: boolean;
+  format?: 'json' | 'csv';
+  limit?: number;
+  offset?: number;
+}): Promise<Record<string, unknown>> {
+  if (!args.job_id && !args.client_tag) return { ok: false, error: 'job_id or client_tag required' };
+  const got = await fetchOwnerHits(args);
+  const base = {
+    ok: !got.error,
+    job_id: args.job_id || null,
+    client_tag: args.client_tag || null,
+    returned: got.rows.length,
+    offset: args.offset ?? 0,
+    from: got.source,
+    error: got.error,
+  };
+  if (args.format === 'csv') return { ...base, csv: ownerHitsCsv(got.rows) };
+  return { ...base, owners: got.rows.map(ownerHitForReply) };
 }

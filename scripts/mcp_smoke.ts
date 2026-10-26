@@ -6,15 +6,17 @@
  *   MCP_URL=https://... npx tsx scripts/mcp_smoke.ts --in x.csv
  *
  * CSV columns: company (or company_name), city, state, optional phone, website.
- * Prints the quote, then counts, per-state hit rates and spend. Never prints names.
+ * Prints the quote, then the owners found, per-state hit rates and spend.
+ * --out owners.csv saves every owner (via get_owner_results format=csv).
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { parseCsvLine } from '../src/server/lib/stateOwners/sos/sampleCsv.js';
 
 const URL_ = process.env.MCP_URL || 'https://business-owners.up.railway.app/mcp';
 const args = process.argv.slice(2);
 const inPath = args[args.indexOf('--in') + 1];
 const run = args.includes('--run');
+const outPath = args.includes('--out') ? args[args.indexOf('--out') + 1] : null;
 if (!inPath || args.indexOf('--in') === -1) {
   console.error('usage: npx tsx scripts/mcp_smoke.ts --in companies.csv [--run]');
   process.exit(1);
@@ -85,3 +87,13 @@ console.log(`via open_data=${out.via_open_data} serper=${out.via_serper} unblock
 for (const [st, s] of Object.entries(out.hit_rate_by_state as Record<string, { named: number; attempted: number }>)) {
   console.log(`  ${st}: ${s.named}/${s.attempted}`);
 }
+console.log(`\nOWNERS (${out.owners_total})`);
+for (const o of out.owners as Array<Record<string, unknown>>) {
+  console.log(`  ${String(o.company_name).padEnd(36)} ${o.first_name} ${o.last_name}  (${o.title}; ${o.source}; ${o.confidence_score})`);
+}
+if (outPath) {
+  const csv = await tool('get_owner_results', { job_id: out.job_id, format: 'csv', limit: 5000 });
+  writeFileSync(outPath, csv.csv + '\n');
+  console.log(`\nsaved ${csv.returned} owners to ${outPath}`);
+}
+console.log(`\njob_id=${out.job_id}  (saved to Supabase: ${out.results_saved ?? 0} rows)`);

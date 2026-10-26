@@ -163,6 +163,9 @@ export interface BusinessOwnerJobSnapshot {
   serper_credits: number;
   serper_usd: number;
   via_serper: number;
+  results_saved?: number;
+  results_db?: boolean;
+  results_save_error?: string;
   unblocker_estimate_usd?: number;
   unblocker_usd?: number;
   unblocker_requests?: number;

@@ -1,35 +1,21 @@
 export const SERVER_INSTRUCTIONS = `
 # Business Owners MCP
 
-You look up **small-business owners / officers** from a company name + city + state (optional domain). No permit or license number required.
+You find the **owner of a small business** (first name, last name, title) from company name + city + state, plus phone and website when you have them (phone is the strongest match key). The owner name is the deliverable: it goes to Email Finder Waterfall in \`name_company\` mode for email and mobile.
 
-This is **not** the Permits MCP. Do not pull permits, parcels, or calling lists.
+## Flow
+1. **Quote first.** Call \`lookup_business_owner\` with \`estimate_only=true\`. Show the user \`quote.total_usd_max\` and the per-state row counts. Run only after they approve.
+2. **Run.** Same rows, \`estimate_only=false\`. Optional \`client_tag\` so results can be pulled by client later. For more than ~200 rows pass \`wait=false\` and poll \`get_business_owner_job\`.
+3. **Get the owners.** The reply's \`owners\` array holds each named owner (first_name, last_name, title, company_name, legal_name, domain, phone, owner_email/owner_phone when a public file carried one, source, confidence_score). \`get_owner_results(job_id)\` pages the rest; \`format=csv\` returns a CSV. Every result is also saved in Supabase \`business_owners.owner_hits\`.
+4. **Hand off.** Send owners to Email Finder Waterfall as name_company rows (first_name, last_name, company_name, domain).
 
-## Goal
-Return a person Email Finder Waterfall can consume in \`name_company\` mode: first name, last name, title, company, domain if known, source URL, confidence (band + 0–1 score). Target: **≥70% of small-business owners found, correct, and named** across the 41 jurisdictions with an official owner source.
+## What runs per row
+Free public files first (PA officers, FMCSA, NPPES, state license / liquor / trade-name files, FL + IL bulk) → Serper → official registry (bot-walled states through the unblocker) → About page / LinkedIn → LLC unmask by address. Registered agents count only when they are a person at the business address or their surname is in the company name.
 
-## Skip for now (registered-agent-only)
-Do not spend SOS budget on: CO, OH, NY, WI, IA, ND, SD, KS, ID, ME, MD, NJ, IN, TN, AR, AK, DE, MI, NM, SC.
-
-## Flow (every lookup)
-1. **DBA → legal name** (Serper-first): website footer / privacy / terms / copyright, then \`"name" city LLC OR Inc\`, then Google Maps/GBP, then free county FBN hits.
-2. **Serper owner** (google.serper.dev). High confidence (≥0.8) can skip SOS.
-3. **Official SOS** for officer-publishing states. CA uses the hybrid path (dz_omar bizfile scraper + apify/web-fetch SI PDFs). Apify is fallback only, behind \`APIFY_MAX_USD\`. Never paid datasets.
-4. **Agent-only fallback**: About page → Serper LinkedIn owner/founder/president (company + city match) → find-named-person MCP if configured.
-5. Every person gets a **confidence score**. Agents are never waterfall-ready.
-
-## Tools
-- \`health\` — keys present (masked), skip-state list, 41 officer states, unblocker + open-data flags.
-- \`lookup_business_owner\` — batch via \`rows[]\`. \`estimate_only\` quotes Serper credits + Apify envelope. \`ca_batch\` = CA hybrid. Counts / job_id / nameless samples only. Never dump officer names in chat.
-- \`get_business_owner_job\` — poll. Counts only.
-
-## Hard rules
-- Prefer Serper over Apify. \`TOTAL_MAX_USD\` is the unified Apify + Serper cap (falls back to \`APIFY_MAX_USD\`). Per-company Apify ceiling \`APIFY_USD_PER_COMPANY\` (default $0.02). Apify is billed \`usageTotalUsd\` plus pay-per-event charges from the finished run. Serper is $0.001/query, ≤8/company.
-- Direct SOS HTTP first (≤15s). Residential proxy only for bot-block states. Apify only after 403 / captcha / Incapsula — never on not-found or timeout. TX Comptroller FTAS JSON and FL Sunbiz are HTTP-only.
-- A blocked/challenge page is never a match.
-- Registered agent ≠ owner.
-- No permit/license-board path. No CSLB / TDLR / L&I.
-- Live probes: ≤5 companies, \`APIFY_MAX_USD=2\`.
+## Rules
+- Only \`waterfall_ready=true\` owners are returned by default; \`only_named=false\` includes misses and low-confidence candidates.
+- \`TOTAL_MAX_USD\` caps Serper + unblocker + Apify spend per run.
+- Agent-only states (CO OH NY WI MD NJ SC KS DE ME) still run the free files and web steps; expect lower hit rates there.
 `.trim();
 
 export const GUIDE_MARKDOWN = `# Business Owners MCP — operator guide
@@ -42,7 +28,8 @@ export const GUIDE_MARKDOWN = `# Business Owners MCP — operator guide
 ## Keys
 - \`SERPER_API_KEY\` — first tier, DBA, LinkedIn, Maps
 - \`APIFY_TOKEN\` + \`APIFY_MAX_USD\` — CA hybrid / blocked HTML only
-- Optional: \`FIND_NAMED_PERSON_URL\`, \`SUPABASE_URL\` (writes off)
+- \`UNBLOCKER_PROVIDER\` + \`UNBLOCKER_API_KEY\` — bot-walled registries
+- \`BO_SUPABASE_URL\` / \`BO_SUPABASE_KEY\` / \`BO_REGISTRY_TOKEN\` — FL/IL bulk and the owner_hits results table
 
 ## CA
 Hybrid default: \`dz_omar/california-bizfile-scraper\` then \`apify/web-fetch\` SI PDFs. Playwright UI is Incapsula-blocked; \`ca_playwright\` is opt-in only.

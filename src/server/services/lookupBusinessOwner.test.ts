@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { getJob, resetJobsForTests } from '../lib/stateOwners/sos/jobs.js';
+import { resetOwnerHitsForTests } from '../lib/stateOwners/sos/ownerHits.js';
 import {
   APIFY_USD_PER_BLOCKED_LOOKUP,
+  getOwnerResults,
   PHASE1_WRITES_ENABLED,
   WRITES_ENABLED,
   getBusinessOwnerJob,
@@ -14,9 +16,11 @@ describe('lookup_business_owner scaffold', () => {
   it('returns a first-use envelope on estimate_only without calling SOS', async () => {
     const out = await lookupBusinessOwner({ estimate_only: true });
     assert.equal(out.ok, true);
-    assert.equal(out.writes_enabled, false);
-    assert.equal(PHASE1_WRITES_ENABLED, false);
-    assert.equal(WRITES_ENABLED, false);
+    assert.equal(out.writes_enabled, true);
+    assert.equal(PHASE1_WRITES_ENABLED, true);
+    assert.equal(WRITES_ENABLED, true);
+    assert.equal((out.quote as { rows: number }).rows, 0);
+    assert.equal(out.requires_approval, true);
     assert.equal(out.phase, 3);
     const first = out.first_use as {
       assumed_total: number;
@@ -48,7 +52,7 @@ describe('lookup_business_owner scaffold', () => {
     assert.equal(priced.serper_estimate_usd, 0.016);
   });
 
-  it('records a dry job with counts only', async () => {
+  it('records a job and returns no owners when nothing matched', async () => {
     resetJobsForTests();
     const out = await lookupBusinessOwner({
       dry_run: true,
@@ -61,7 +65,9 @@ describe('lookup_business_owner scaffold', () => {
     assert.equal(out.ok, true);
     assert.equal(out.processed, 2);
     assert.equal(out.named, 0);
-    assert.equal(out.writes_enabled, false);
+    assert.equal(out.writes_enabled, true);
+    assert.deepEqual(out.owners, []);
+    assert.equal(out.misses, 2);
     const job = getJob(String(out.job_id));
     assert.equal(job?.status, 'completed');
     const fetched = await getBusinessOwnerJob(String(out.job_id));
@@ -99,5 +105,38 @@ describe('officer-publishing rollout', () => {
     assert.ok(officer.includes('DC'));
     assert.ok(!officer.includes('CO'));
     assert.ok((AGENT_ONLY_SKIP_CODES as readonly string[]).includes('NY'));
+  });
+
+  it('returns owner names inline and through get_owner_results (json + csv)', async () => {
+    resetJobsForTests();
+    resetOwnerHitsForTests();
+    const paRows = [
+      { business_name: 'Keystone Roofing LLC', filing_number: '9', city: 'York', party_type: 'Member', first_name: 'ED', last_name: 'STOLTZFUS' },
+    ];
+    const fetch = async (input: string | URL | Request) =>
+      new Response(JSON.stringify(/xvd7-5r2c/.test(String(input)) ? paRows : []), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const out = await lookupBusinessOwner({
+      client_tag: 'test_client',
+      context: { live: false, fetch, openDataSources: ['pa_dos'], serperEnabled: false },
+      rows: [
+        { company_name: 'Keystone Roofing', city: 'York', state: 'PA', phone: '717-555-0100' },
+        { company_name: 'Nobody Here Co', city: 'Erie', state: 'PA' },
+      ],
+    });
+    assert.equal(out.named, 1);
+    const owners = out.owners as Array<Record<string, unknown>>;
+    assert.equal(owners.length, 1);
+    assert.equal(owners[0].first_name, 'Ed');
+    assert.equal(owners[0].last_name, 'Stoltzfus');
+    assert.equal(owners[0].company_name, 'Keystone Roofing');
+    assert.equal(owners[0].source, 'pa_dos');
+    assert.equal(out.owners_total, 1);
+    const res = await getOwnerResults({ job_id: String(out.job_id) });
+    assert.equal((res.owners as unknown[]).length, 1);
+    const all = await getOwnerResults({ job_id: String(out.job_id), only_named: false });
+    assert.equal((all.owners as unknown[]).length, 2);
+    const csv = await getOwnerResults({ job_id: String(out.job_id), format: 'csv' });
+    assert.match(String(csv.csv), /^input_company,/);
+    assert.match(String(csv.csv), /Keystone Roofing,York,PA,717-555-0100,.*,Ed,Stoltzfus,/);
   });
 });
