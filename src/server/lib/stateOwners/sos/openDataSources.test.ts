@@ -158,3 +158,23 @@ describe('dispatcher', () => {
     assert.equal(r.result?.people[0].last_name?.toUpperCase(), 'STOLTZFUS');
   });
 });
+
+describe('NY DMV entity owners', () => {
+  it('does not treat a split corporate owner name as a person and passes it on as the legal name', async () => {
+    const { resolveNyDmv } = await import('./openDataSources.js');
+    const rows = [{ facility_name: 'BROOKLYN AUTO REPAIR', facility_city: 'BROOKLYN', owner_name: 'SULTAN PETROLEUM', owner_name_overflow: 'CORP' }];
+    const ctx: LookupContext = { live: false, fetch: fakeFetch([[/nhjr-rpi2/, rows]]) };
+    const r = await resolveNyDmv({ company_name: 'Brooklyn Auto Repair', city: 'Brooklyn', state: 'NY' }, ctx);
+    assert.equal(r.result, null);
+    assert.equal(r.legal_name, 'SULTAN PETROLEUM CORP');
+  });
+});
+
+describe('owner titles', () => {
+  it('strips the person name and junk from a scraped title', async () => {
+    const { cleanTitle } = await import('./ownerHits.js');
+    assert.equal(cleanTitle('Owner Michael Jordan', 'Michael', 'Jordan'), 'Owner');
+    assert.equal(cleanTitle('Owner And Master Plumber.', 'Donna', 'Moore'), 'Owner and Master Plumber');
+    assert.equal(cleanTitle(null), null);
+  });
+});

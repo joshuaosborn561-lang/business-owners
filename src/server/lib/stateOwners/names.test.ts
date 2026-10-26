@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  isJobTitlePhrase,
   companySearchQueries,
   coreCompanySearchName,
   hasCompanyWord,
@@ -279,5 +280,18 @@ describe('splitPersonName lead-ins', () => {
     const s = splitForLeadIn('Meet Jane Doe');
     assert.equal(String(s.first_name).toUpperCase(), 'JANE');
     assert.equal(String(s.last_name).toUpperCase(), 'DOE');
+  });
+});
+
+describe('job titles are not names', () => {
+  it('rejects title phrases and trade surnames, keeps real names', () => {
+    assert.ok(isJobTitlePhrase('Master Plumber'));
+    assert.ok(isJobTitlePhrase('General Manager'));
+    assert.ok(isJobTitlePhrase('Owner Operator'));
+    assert.ok(isJobTitlePhrase('Joe Plumber'));
+    assert.ok(!isJobTitlePhrase('Donna Moore'));
+    assert.ok(!isJobTitlePhrase('Mike Masters'));
+    assert.equal(validateOfficerPersonName('Master Plumber').ok, false);
+    assert.equal(validateOfficerPersonName('Donna Moore').ok, true);
   });
 });

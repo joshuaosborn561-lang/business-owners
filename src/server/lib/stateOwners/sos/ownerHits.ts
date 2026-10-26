@@ -46,6 +46,18 @@ const titleCase = (s: string | null | undefined): string | null => {
   return t.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (_, p: string, c: string) => p + c.toUpperCase()).replace(/\bMc([a-z])/g, (_, c: string) => `Mc${c.toUpperCase()}`);
 };
 
+/** "Owner Michael Jordan" -> "Owner"; "Owner And Master Plumber." -> "Owner and Master Plumber". */
+export function cleanTitle(title: string | null | undefined, first?: string | null, last?: string | null): string | null {
+  let t = String(title || '').replace(/\s+/g, ' ').trim();
+  for (const part of [first, last]) {
+    const p = String(part || '').trim();
+    if (p.length >= 2) t = t.replace(new RegExp(`\\b${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'ig'), ' ');
+  }
+  t = t.replace(/\s+/g, ' ').replace(/^[\s,;:.-]+|[\s,;:.-]+$/g, '').replace(/\bAnd\b/g, 'and');
+  if (!t) return title ? 'Owner' : null;
+  return t.length > 60 ? t.slice(0, 60).trim() : t;
+}
+
 /** Best person: first waterfall-ready hit, else the first named candidate. */
 export function bestPerson(result: NameLookupResult): { person: WaterfallOwnerHit | null; ready: boolean } {
   const ready = result.people.find((p) => isWaterfallReady(p));
@@ -69,7 +81,7 @@ export function toOwnerHitRow(jobId: string, clientTag: string | null, input: Na
     legal_name: result.legal_name || result.business_name || null,
     owner_first: titleCase(person?.first_name),
     owner_last: titleCase(person?.last_name),
-    owner_title: person?.title || null,
+    owner_title: cleanTitle(person?.title, person?.first_name, person?.last_name),
     owner_role: person?.role || null,
     owner_email: person?.email || null,
     owner_phone: person?.phone || null,

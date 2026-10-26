@@ -125,6 +125,23 @@ export interface OfficerNameVerdict {
  * Officer / owner person names for waterfall_ready. Strips REV/DR/DVM/etc.
  * Rejects cities, company words, and missing last names (those are flagged).
  */
+const JOB_WORDS = new Set(
+  ('owner co-owner founder president ceo cfo coo vp vice chief officer director manager managing member partner principal ' +
+    'master journeyman licensed certified general lead head senior junior chief operator proprietor agent broker ' +
+    'plumber plumbing electrician electrical contractor technician tech mechanic installer roofer painter carpenter ' +
+    'dentist doctor attorney lawyer realtor stylist barber therapist consultant engineer architect inspector ' +
+    'service services sales office admin administrator team staff customer support').split(' '),
+);
+const TRADE_SURNAMES = new Set('plumber electrician contractor technician mechanic installer roofer stylist barber therapist consultant manager owner president director'.split(' '));
+
+/** "Master Plumber", "General Manager", "Owner Operator": a job title parsed as a name. */
+export function isJobTitlePhrase(name: string): boolean {
+  const toks = String(name || '').toLowerCase().replace(/[^a-z\s-]/g, ' ').split(/\s+/).filter(Boolean);
+  if (!toks.length) return false;
+  if (toks.every((t) => JOB_WORDS.has(t))) return true;
+  return TRADE_SURNAMES.has(toks[toks.length - 1]);
+}
+
 export function validateOfficerPersonName(
   raw: string,
   extraPlaces: Array<string | null | undefined> = [],
@@ -159,6 +176,9 @@ export function validateOfficerPersonName(
   }
   if (isPlaceName(`${split.first_name} ${split.last_name}`, extraPlaces)) {
     return { ...empty, full_name: split.full_name_raw, reason: 'place' };
+  }
+  if (isJobTitlePhrase(`${split.first_name} ${split.last_name}`)) {
+    return { ...empty, full_name: split.full_name_raw, reason: 'title' };
   }
   return {
     ok: true,

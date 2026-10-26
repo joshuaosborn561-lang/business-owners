@@ -127,6 +127,9 @@ function isPerson(name: string, city?: string | null): boolean {
   if (/\b(LLC|L\.L\.C|INC|CORP|CORPORATION|COMPANY|CO\.|LTD|LP|LLP|PLLC|P\.?C\.?|TRUST|ASSOC|ASSOCIATION|SERVICES?|ENTERPRISES?|HOLDINGS?|GROUP|PARTNERS|BANK|CHURCH|MINISTR)\b/i.test(n)) {
     return false;
   }
+  // Fixed-width files split long names across two fields; a glued suffix ("PETROLEUMCORP") is still an entity.
+  if (/[A-Z]{3,}(CORP|CORPORATION|INC|LLC|LTD|COMPANY|ENTERPRISES?|HOLDINGS?|SERVICES?)\b/i.test(n)) return false;
+  if (/\b(PETROLEUM|GAS|OIL|MOTORS?|AUTO(MOTIVE)?|COLLISION|TIRES?|TOWING|REPAIRS?|SALES|LEASING|RENTALS?|TRANSPORT(ATION)?|TRUCKING|LOGISTICS)\b/i.test(n)) return false;
   return validateOfficerPersonName(n, city ? [city] : undefined).ok;
 }
 
@@ -296,7 +299,9 @@ export async function resolveNyDmv(input: NameLookupInput, ctx?: LookupContext):
   const rows = (await soda(ctx, url)).filter((r) => r.owner_name);
   const pick = pickCandidate(rows, input, (r) => `${r.facility_name || ''}${r.facility_name_overflow || ''}`, (r) => r.facility_city);
   if (!pick) return { result: null, legal_name: null };
-  const owner = `${pick.row.owner_name || ''}${pick.row.owner_name_overflow || ''}`.replace(/\s+/g, ' ').trim();
+  const ownerHead = String(pick.row.owner_name || '');
+  const ownerTail = String(pick.row.owner_name_overflow || '');
+  const owner = (ownerTail ? `${ownerHead}${ownerHead.length >= 25 ? '' : ' '}${ownerTail}` : ownerHead).replace(/\s+/g, ' ').trim();
   if (isPerson(lastFirstToFirstLast(owner), input.city)) {
     const result = made(input, [{ name: lastFirstToFirstLast(owner), title: 'Owner', role: 'owner', labeled: true }], url, pick.method, pick.cityMatch, 'ny_dmv');
     return { result, legal_name: null };
