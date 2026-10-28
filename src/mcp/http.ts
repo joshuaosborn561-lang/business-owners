@@ -1,8 +1,28 @@
-import { randomUUID } from 'node:crypto';
-import type { Express, Request, Response } from 'express';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import type { Express, NextFunction, Request, Response } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { createBusinessOwnersMcpServer, healthPayload } from './createServer.js';
+
+/**
+ * Optional shared-secret gate for /mcp. Off unless MCP_AUTH_TOKEN is set (existing behavior).
+ * Accepts `Authorization: Bearer <token>` or `?key=<token>` (for connectors that only take a URL).
+ * Table jobs spend vendor money and write to Supabase, so set it on any internet-facing deployment.
+ */
+export function mcpAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const expected = process.env.MCP_AUTH_TOKEN?.trim();
+  if (!expected) return next();
+  const header = String(req.headers.authorization || '');
+  const bearer = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+  const q = typeof req.query.key === 'string' ? req.query.key : '';
+  const ok = (given: string) => {
+    const a = Buffer.from(given);
+    const b = Buffer.from(expected);
+    return a.length === b.length && timingSafeEqual(a, b);
+  };
+  if ((bearer && ok(bearer)) || (q && ok(q))) return next();
+  res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null });
+}
 
 /**
  * Mount Streamable HTTP MCP at /mcp for Claude / Cursor remote connectors.
@@ -22,7 +42,7 @@ export function mountMcpHttp(app: Express): void {
     }
   };
 
-  app.post('/mcp', async (req: Request, res: Response) => {
+  app.post('/mcp', mcpAuthMiddleware, async (req: Request, res: Response) => {
     try {
       const sessionIdHeader = req.headers['mcp-session-id'];
       const sessionId = Array.isArray(sessionIdHeader) ? sessionIdHeader[0] : sessionIdHeader;
@@ -78,7 +98,7 @@ export function mountMcpHttp(app: Express): void {
     }
   });
 
-  app.get('/mcp', async (req: Request, res: Response) => {
+  app.get('/mcp', mcpAuthMiddleware, async (req: Request, res: Response) => {
     const sessionIdHeader = req.headers['mcp-session-id'];
     const sessionId = Array.isArray(sessionIdHeader) ? sessionIdHeader[0] : sessionIdHeader;
 
@@ -97,7 +117,7 @@ export function mountMcpHttp(app: Express): void {
     }
   });
 
-  app.delete('/mcp', async (req: Request, res: Response) => {
+  app.delete('/mcp', mcpAuthMiddleware, async (req: Request, res: Response) => {
     const sessionIdHeader = req.headers['mcp-session-id'];
     const sessionId = Array.isArray(sessionIdHeader) ? sessionIdHeader[0] : sessionIdHeader;
 
@@ -120,7 +140,7 @@ export function mountMcpHttp(app: Express): void {
       ...healthPayload(),
       transport: 'streamable-http',
       path: '/mcp',
-      authRequired: false,
+      authRequired: Boolean(process.env.MCP_AUTH_TOKEN?.trim()),
       sessionMode: 'stateful',
       supportsGetSse: true,
       enableJsonResponse: true,
