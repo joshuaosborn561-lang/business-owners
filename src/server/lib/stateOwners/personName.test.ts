@@ -35,5 +35,13 @@ describe('isWaterfallReady guards', () => {
   it('passes a normal LinkedIn owner', () => assert.equal(isWaterfallReady(base({})), true));
   it('rejects a hard_to_find non-person', () => assert.equal(isWaterfallReady(base({ source: 'hard_to_find', first_name: 'Self', last_name: 'Storage' })), false));
   it('rejects a manager from a web source', () => assert.equal(isWaterfallReady(base({ title: 'Manager' })), false));
+  it('rejects a free-text hit that just echoes the company name', () => {
+    assert.equal(isWaterfallReady(base({ source: 'hard_to_find', first_name: 'Action', last_name: 'Lanes', company_name: 'Action Lanes' })), false);
+    assert.equal(isWaterfallReady(base({ source: 'hard_to_find', first_name: 'Jiu', last_name: 'Jitsu', company_name: 'Academy of Jiu Jitsu - Ripon' })), false);
+    assert.equal(isWaterfallReady(base({ source: 'serper', first_name: 'Action', last_name: 'Lanes', company_name: 'Action Lanes' })), false);
+  });
+  it('keeps a real person on a free-text source when only the surname is in the company name', () => {
+    assert.equal(isWaterfallReady(base({ source: 'hard_to_find', first_name: 'Pat', last_name: 'Blach', company_name: 'Blach Beverage LLC' })), true);
+  });
   it('keeps registry officer titles untouched', () => assert.equal(isWaterfallReady(base({ source: 'ca_bizfile', title: 'Manager', confidence: 'high' })), true));
 });
