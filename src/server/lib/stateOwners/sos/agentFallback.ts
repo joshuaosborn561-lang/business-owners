@@ -1,3 +1,4 @@
+import { isNonOwnerTitle } from '../personName.js';
 import {
   extractTitleAdjacentPeople,
   isJobTitlePersonName,
@@ -186,13 +187,19 @@ async function fromLinkedInSerper(
     const verdict = validateOfficerPersonName(name, [input.city]);
     if (!verdict.ok) continue;
     if (!linkedinSlugAgreesWithName(url, verdict.first_name, verdict.last_name)) continue;
+    // Title must belong to THIS person and be owner-type. A Manager/Supervisor profile is not the owner.
+    const mine = officers.find((o) => String(o.name || '').toLowerCase().includes(String(verdict.last_name || '').toLowerCase()));
+    const ownerWord = blob.match(/\b(co-?owner|owner|co-?founder|founder|president|ceo|principal|proprietor)\b/i);
+    const liTitle = mine?.title || null;
+    if (liTitle && isNonOwnerTitle(liTitle)) continue;
+    if (!liTitle && !ownerWord) continue;
     return {
       credits,
       hit: attachConfidence(
         {
           first_name: verdict.first_name,
           last_name: verdict.last_name,
-          title: officers[0]?.title || 'Owner',
+          title: liTitle || (ownerWord ? ownerWord[1].replace(/^./, (c) => c.toUpperCase()) : 'Owner'),
           company_name: input.company_name,
           domain: input.domain ?? null,
           source_url: url,

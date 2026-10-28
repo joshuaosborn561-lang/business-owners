@@ -14,6 +14,7 @@
  *  - hard cap: each job has max_usd; the spend tracker refuses vendor calls past the remaining budget and the job
  *    stops as "capped" with everything done so far kept.
  */
+import { checkPlausiblePersonName, isNonOwnerTitle } from '../lib/stateOwners/personName.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { normalizeState } from '../lib/stateOwners/names.js';
 import {
@@ -489,9 +490,16 @@ function toInput(row: SourceRow, defaultState: string): NameLookupInput {
 
 function toDestRow(jobId: string, row: SourceRow, input: NameLookupInput, result: NameLookupResult): DestRow {
   const hit = toOwnerHitRow(jobId, null, input, result);
+  // Belt and braces on top of isWaterfallReady: never write a non-person string or a staff title as a ready owner.
+  let ready = hit.waterfall_ready;
+  let coverage = hit.coverage_reason;
+  if (ready && (!checkPlausiblePersonName(hit.owner_first, hit.owner_last).ok || isNonOwnerTitle(hit.owner_title))) {
+    ready = false;
+    coverage = 'not_person' as typeof coverage;
+  }
   return {
     source_id: row.id,
-    status: hit.waterfall_ready ? 'named' : 'miss',
+    status: ready ? 'named' : 'miss',
     legal_name: hit.legal_name,
     owner_first: hit.owner_first,
     owner_last: hit.owner_last,
@@ -503,11 +511,30 @@ function toDestRow(jobId: string, row: SourceRow, input: NameLookupInput, result
     source_url: hit.source_url,
     confidence: hit.confidence,
     confidence_score: hit.confidence_score,
-    waterfall_ready: hit.waterfall_ready,
-    coverage_reason: hit.coverage_reason,
+    waterfall_ready: ready,
+    coverage_reason: coverage,
     cost_usd: hit.cost_usd,
     error: null,
   };
+}
+
+
+/**
+ * Per-row cost_usd comes from each lookup's own estimate fields (summed Serper + Apify + unblocker attributions, which
+ * include rates for refused/blocked calls and overlap between sub-steps). The job's spend_usd comes from the shared
+ * spend tracker, which records what was actually billed. To make the two agree, a batch's tracker spend is spread over
+ * the rows that were attempted, weighted by their own estimates (evenly when none has one).
+ */
+export function allocateBatchCost(rows: DestRow[], actualUsd: number): void {
+  const attempted = rows.filter((r) => r.coverage_reason !== 'no_state' && r.status !== undefined);
+  if (!attempted.length) return;
+  const actual = Math.max(0, Number(actualUsd) || 0);
+  const weights = attempted.map((r) => Math.max(0, Number(r.cost_usd) || 0));
+  const total = weights.reduce((a, b) => a + b, 0);
+  attempted.forEach((r, i) => {
+    const share = total > 0 ? (weights[i] / total) * actual : actual / attempted.length;
+    r.cost_usd = Number(share.toFixed(5));
+  });
 }
 
 interface BatchOutcome {
@@ -635,6 +662,7 @@ export async function runTableJob(jobId: string, deps: TableJobDeps): Promise<Jo
         ...(deps.ctxOverrides || {}),
       });
       const out = await processBatch(jobId, rows, ctx, tracker, opts, deps);
+      allocateBatchCost(out.rows, tracker.usd);
 
       if (out.rows.length) {
         await withRetry(() => store.write(job.dest_table, jobId, out.rows), { attempts: 4, baseDelayMs: 1000, label: 'tj write' });
