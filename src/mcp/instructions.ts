@@ -9,6 +9,14 @@ You find the **owner of a small business** (first name, last name, title) from c
 3. **Get the owners.** The reply's \`owners\` array holds each named owner (first_name, last_name, title, company_name, legal_name, domain, phone, owner_email/owner_phone when a public file carried one, source, confidence_score). \`get_owner_results(job_id)\` pages the rest; \`format=csv\` returns a CSV. Every result is also saved in Supabase \`business_owners.owner_hits\`.
 4. **Hand off.** Send owners to Email Finder Waterfall as name_company rows (first_name, last_name, company_name, domain).
 
+## Big lists: table jobs (no lead rows in chat)
+For more than a handful of companies, or whenever lead rows must not pass through chat, use the table tools instead of pasting \`rows[]\`:
+1. \`start_table_job(source_table, id_column, dest_table?, filters?, limit?)\` with the default \`dry_run=true\`. It returns row counts by state, the per-row and total cost ceiling and expected spend. Nothing is spent or written. Show it to the user.
+2. After approval: the same call with \`dry_run=false\` and \`max_usd\` (the approved ceiling). Start with \`limit=100\` as a pilot. The job runs in the background and stops by itself at \`max_usd\`.
+3. \`get_table_job_status(job_id)\` until completed (or capped: \`resume_table_job(job_id, max_usd)\` after approval). \`export_table_job_summary(job_id)\` gives counts only.
+4. Results are rows in \`dest_table\` (named owners have \`waterfall_ready=true\`). Downstream steps read that table directly. Never ask for the rows in chat.
+Safe to repeat: finished rows are skipped and never charged twice; a restart resumes by itself.
+
 ## What runs per row
 Free public files first (PA officers, FMCSA, NPPES, state license / liquor / trade-name files, FL + IL bulk) → Serper → official registry (bot-walled states through the unblocker) → About page / LinkedIn → LLC unmask by address. Registered agents count only when they are a person at the business address or their surname is in the company name.
 

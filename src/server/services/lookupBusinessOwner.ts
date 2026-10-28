@@ -475,7 +475,7 @@ export async function lookupBusinessOwner(opts: LookupBusinessOwnerOpts): Promis
     return {
       ok: false,
       job_id: jobId,
-      error: 'source_table paging is not enabled in this PR (no Supabase writes). Pass rows[] or use scripts/owner_lookup_sample.ts.',
+      error: 'source_table is not read by lookup_business_owner. Use start_table_job (reads a Supabase table server-side and writes results to a table), or pass rows[].',
       writes_enabled: WRITES_ENABLED,
       phase: OWNER_LOOKUP_PHASE,
     };

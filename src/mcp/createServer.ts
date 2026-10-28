@@ -14,6 +14,14 @@ import {
   getOwnerResults,
   lookupBusinessOwner,
 } from '../server/services/lookupBusinessOwner.js';
+import {
+  cancelTableJob,
+  exportTableJobSummary,
+  getTableJobStatus,
+  resumeTableJob,
+  startTableJob,
+} from '../server/services/tableJobs.js';
+import { rpcConfigFromEnv } from '../server/lib/tableJobs/store.js';
 import { GUIDE_MARKDOWN, SERVER_INSTRUCTIONS, WHEN_TO_USE_MARKDOWN } from './instructions.js';
 
 function jsonResult(data: unknown) {
@@ -46,7 +54,18 @@ export function healthPayload() {
     writes_enabled: config.writesEnabled,
     officer_publishing_states: [...OFFICER_PUBLISHING_CODES],
     skipped_agent_only_states: [...AGENT_ONLY_SKIP_CODES],
-    tools: ['health', 'lookup_business_owner', 'get_business_owner_job', 'get_owner_results'],
+    tools: [
+      'health',
+      'lookup_business_owner',
+      'get_business_owner_job',
+      'get_owner_results',
+      'start_table_job',
+      'get_table_job_status',
+      'export_table_job_summary',
+      'resume_table_job',
+      'cancel_table_job',
+    ],
+    table_jobs_configured: Boolean(rpcConfigFromEnv()),
     results_table: 'business_owners.owner_hits',
     results_db_configured: Boolean(process.env.BO_SUPABASE_URL && process.env.BO_SUPABASE_KEY && process.env.BO_REGISTRY_TOKEN),
     when_to_use:
@@ -114,8 +133,8 @@ WHAT IT DOES: DBA→legal name (website footer/privacy/terms/copyright, Serper L
 ORDER: free open data first (PA officers, FMCSA by phone, NPPES, state license / liquor / trade-name files, FL + IL bulk) → Serper → official registry (unblocker lane for bot-walled states when UNBLOCKER_API_KEY is set) → About/LinkedIn → unmask. Pass phone from the Maps row: it is the strongest join key.\nQUOTE FIRST: call with estimate_only=true, show quote.total_usd_max to the user, and run only after they approve.\nSKIP STATES: CO OH NY WI MD NJ SC KS DE ME (no officer data exists; trade names, license files and web still run).
 NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sample.ts --in companies.csv --out results.csv.`,
       inputSchema: {
-        source_table: z.string().optional().describe('Later: schema.table. This phase needs rows[].'),
-        where: z.string().optional().describe('Later SQL predicate for source_table'),
+        source_table: z.string().optional().describe('Not used here. To run on a Supabase table without pasting rows, use start_table_job.'),
+        where: z.string().optional().describe('Not used here. start_table_job takes structured filters.'),
         rows: z
           .array(
             z.object({
@@ -203,6 +222,107 @@ NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sa
         return errorResult(err instanceof Error ? err.message : 'get_owner_results failed');
       }
     },
+  );
+
+  const TABLE_JOB_ID = z.string().regex(/^tj-[a-f0-9]{10}(-\d{1,3})?$/).describe('job_id returned by start_table_job');
+
+  server.registerTool(
+    'start_table_job',
+    {
+      title: 'Owner lookup on a Supabase table (server-side, no rows in chat)',
+      description: `WHEN TO USE: more than a handful of companies, or any time lead rows must not pass through chat. The server reads the rows from a Supabase table, runs the same owner lookup as lookup_business_owner, and writes one result row per source row to dest_table. This tool never returns lead rows or names: only counts, costs and a nameless sample.
+ALWAYS dry_run first (the default): returns the row counts by state, a per-row and total cost ceiling, expected spend, runtime and warnings, and spends/writes/creates nothing. Show it to the user. Run only after they approve: call again with dry_run=false and max_usd = the approved dollar ceiling. The job stops by itself at max_usd (status "capped"; done rows are kept).
+SAFE TO REPEAT: results are keyed by id_column in dest_table. Rows already done are skipped and never charged again; calling again with the same source/dest/filters continues the same job. Start with limit=100 as a pilot.
+TABLES: source_table and dest_table are schema.table in an allowlisted schema (sources: scratch, client_*, lp, public; destinations: scratch, client_* and the table name must start with bo_). dest_table defaults to <schema>.bo_owners_<source table>. The destination table is created for you with a fixed shape: source_id, status (named|miss|error), owner_first, owner_last, owner_title, owner_email, owner_phone, legal_name, source, confidence, waterfall_ready, cost_usd...
+COLUMNS: company name, city, state, phone, domain, website, address are auto-detected; pass column_map {company_name:'name', state:'st', ...} to override. If the table has no state column pass default_state (e.g. "CA").
+FILTERS: structured, never SQL: [{column:'state', op:'eq', value:'CA'}, {column:'status', op:'in', values:['a','b']}]. ops: eq neq gt gte lt lte like ilike in not_in is_null not_null.
+NEXT: get_table_job_status(job_id), then export_table_job_summary(job_id).`,
+      inputSchema: {
+        source_table: z.string().describe('schema.table to read, e.g. client_emcor.owner_netnew_20261010'),
+        id_column: z.string().describe('Unique key column of the source table (e.g. place_id or id). Must be unique among matching rows.'),
+        filters: z
+          .array(
+            z.object({
+              column: z.string(),
+              op: z.enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'in', 'not_in', 'is_null', 'not_null']).optional(),
+              value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+              values: z.array(z.union([z.string(), z.number(), z.boolean()])).max(1000).optional(),
+            }),
+          )
+          .max(20)
+          .optional(),
+        limit: z.number().int().min(1).max(20000).optional().describe('Max rows to run in this job (default 500). Done rows do not count.'),
+        dest_table: z.string().optional().describe('schema.bo_<name>. Created if missing. Default <schema>.bo_owners_<source table>.'),
+        dry_run: z.boolean().optional().describe('Default true: estimate only, spends nothing, writes nothing.'),
+        max_usd: z.number().positive().optional().describe('Required when dry_run=false: the dollar ceiling the user approved. The job stops at this amount.'),
+        column_map: z
+          .object({
+            company_name: z.string().optional(),
+            city: z.string().optional(),
+            state: z.string().optional(),
+            phone: z.string().optional(),
+            domain: z.string().optional(),
+            website: z.string().optional(),
+            address: z.string().optional(),
+            mailing_address: z.string().optional(),
+          })
+          .optional()
+          .describe('Override auto-detected source columns.'),
+        default_state: z.string().optional().describe('State used when the table has no state column or the value is blank, e.g. "CA".'),
+        client_tag: z.string().optional(),
+        ca_batch: z.boolean().optional().describe('CA rows through the hybrid CA BizFile batch (same as lookup_business_owner). Default false.'),
+        ca_max_results: z.number().int().min(1).max(50).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => jsonResult(await startTableJob(args)),
+  );
+
+  server.registerTool(
+    'get_table_job_status',
+    {
+      title: 'Table job status',
+      description:
+        'Progress of a start_table_job run: status (queued|running|completed|capped|failed|cancelled), processed/total, named, misses, errors, hit rate overall and by state, spend vs max_usd. Counts only, no names. Survives server restarts.',
+      inputSchema: { job_id: TABLE_JOB_ID },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => jsonResult(await getTableJobStatus(args.job_id)),
+  );
+
+  server.registerTool(
+    'export_table_job_summary',
+    {
+      title: 'Table job summary (counts only)',
+      description:
+        'Aggregate counts from the destination table for a job: rows, named, waterfall_ready, misses, errors, with email/phone, spend, breakdown by source / confidence / miss reason, hit rate. Never returns rows or names; downstream steps read dest_table directly.',
+      inputSchema: { job_id: TABLE_JOB_ID },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => jsonResult(await exportTableJobSummary(args.job_id)),
+  );
+
+  server.registerTool(
+    'resume_table_job',
+    {
+      title: 'Resume a capped, failed or stalled table job',
+      description:
+        'Continue a job that stopped at its cap, failed, or stalled after a restart. Only the rows without a result are run. To go past a cap, pass a higher max_usd that the user approved.',
+      inputSchema: { job_id: TABLE_JOB_ID, max_usd: z.number().positive().optional().describe('New approved ceiling (must be >= the current one).') },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => jsonResult(await resumeTableJob(args.job_id, args.max_usd)),
+  );
+
+  server.registerTool(
+    'cancel_table_job',
+    {
+      title: 'Cancel a table job',
+      description: 'Stop a running table job after its current batch. Nothing is deleted: results so far stay in dest_table.',
+      inputSchema: { job_id: TABLE_JOB_ID },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => jsonResult(await cancelTableJob(args.job_id)),
   );
 
   return server;

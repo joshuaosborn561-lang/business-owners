@@ -13,8 +13,50 @@ Moved out of [permit-pulling PR #47](https://github.com/joshuaosborn561-lang/per
 | `health` | Key flags (Serper, Apify, unblocker, open data), 41 officer states, skipped agent-only states |
 | `lookup_business_owner` | Batch lookup (`rows[]`, pass `phone`). `estimate_only=true` first returns a `quote` (rows, per-state counts, Serper / Apify / unblocker ceilings); run only after approval. Counts / job_id / nameless samples. Never dump names. |
 | `get_business_owner_job` | Poll. Counts only. |
+| `start_table_job` | Table mode: read a Supabase table server-side, write results to a table. `dry_run` (default) = estimate only. See [Table jobs](#table-jobs). |
+| `get_table_job_status` / `export_table_job_summary` | Progress and aggregate counts. Never rows or names. |
+| `resume_table_job` / `cancel_table_job` | Continue a capped/failed/stalled job (optionally with a higher approved `max_usd`) or stop one. |
 
 HTTP: `POST /mcp` (Streamable HTTP), `GET /health`, `GET /mcp/health`. Stdio: `npm run mcp`.
+
+## Table jobs
+
+For big lists (e.g. ~9.5K EMCOR owner companies from claude.ai) lead rows must not pass through chat. Table mode keeps them server-side:
+
+```
+start_table_job(source_table, id_column, dest_table?, filters?, limit?, column_map?, default_state?, dry_run=true, max_usd?)
+```
+
+1. **Dry run (default):** counts by state, per-row and total cost ceiling, expected spend, runtime, warnings. Reads counts only; creates, writes and spends nothing.
+2. **Run:** same call with `dry_run=false` and `max_usd` (the dollar ceiling the user approved, at most `TABLE_JOBS_MAX_USD`, default 100). Returns a `job_id` immediately; the job runs in the background (50 rows per batch, `LOOKUP_CONCURRENCY` lanes).
+3. **Poll / finish:** `get_table_job_status(job_id)`, then `export_table_job_summary(job_id)` (counts only). Results are rows in `dest_table`; `waterfall_ready = true` rows feed Email Finder `name_company` mode.
+
+Guarantees
+
+- **No lead data in replies.** Tool output is counts, dollars and ids of jobs only.
+- **Hard cap.** The job stops as `capped` at `max_usd`. A row is started only if every in-flight row could still finish inside the cap, so a row that ran out of budget stays pending (not recorded as a miss). `resume_table_job(job_id, max_usd)` continues after a higher ceiling is approved. `spend_usd` (spend tracker) is authoritative; `dest.cost_usd` is per-row attribution.
+- **Idempotent per row.** Results are keyed by `source_id` (= `id_column`) in `dest_table`. Rows already `named`/`miss` are never fetched or charged again; `error` rows retry up to 3 times; a later miss never overwrites a named row. Calling `start_table_job` again continues the same job; a finished job starts the next chunk (`limit` counts only rows still to do).
+- **Resumable.** Progress is in Postgres (`bo_jobs.job` + the destination table), not memory. A heartbeat + claim fence lets a restarted or second instance take over a stalled job (boot + 60s sweeper, or `resume_table_job`). At most one in-flight batch of work is lost on a crash.
+- **Allowlists.** Sources: schemas `scratch, client_emcor, client_salesglider, client_peterson, client_techevo, lp, public`. Destinations: `scratch, client_*`, table name must start with `bo_`; the table is created with a fixed shape (`source_id, status, owner_first, owner_last, owner_title, owner_email, owner_phone, legal_name, source, source_url, confidence, confidence_score, waterfall_ready, coverage_reason, cost_usd, attempts, error, processed_at`). Identifiers must be lowercase `[a-z_][a-z0-9_]{0,62}`; filters are structured (`column`, `op`, `value`), never SQL. Enforced twice: here, and in SQL (`bo_jobs.allowed_schema`, `%I`/`%L` only).
+- **Pilot first.** `limit=100` measures the real cost per row before a big run.
+
+Database side: `supabase/migrations/20261028_table_jobs.sql` (schema `bo_jobs`, token-checked RPCs `public.bo_tj_*`; RLS on, no grants on the tables). Same pattern as the FL/IL registry RPCs.
+
+Env (all required for table mode; without them the tools answer "not configured"):
+
+| Var | Value |
+|-----|-------|
+| `TABLE_JOBS_SUPABASE_URL` | URL of the project holding the lead tables (`https://azpapwtnrbzywlnxxecz.supabase.co`) |
+| `TABLE_JOBS_SUPABASE_KEY` | that project's publishable/anon key |
+| `TABLE_JOBS_TOKEN` | random secret; its sha256 is in `bo_jobs.api_token` |
+| `MCP_AUTH_TOKEN` | optional but recommended: require `Authorization: Bearer` or `?key=` on `/mcp` (add the connector in claude.ai as `https://.../mcp?key=...`) |
+| `TABLE_JOBS_MAX_USD` | per-job `max_usd` ceiling (default 100) |
+| `TABLE_JOBS_READ_SCHEMAS` / `TABLE_JOBS_WRITE_SCHEMAS` | optional narrower allowlists |
+| `TABLE_JOBS_BATCH`, `TABLE_JOBS_AUTORESUME=false` | optional |
+
+Smoke test (counts only): `MCP_URL=... MCP_KEY=... npx tsx scripts/table_jobs_smoke.ts --source schema.table --id place_id [--limit 100] [--run --max-usd 3]`.
+
+SQL integration tests run against a throwaway Postgres + PostgREST (`TJ_TEST_*`, see `src/server/lib/tableJobs/rpc.integration.test.ts`); they are skipped otherwise.
 
 ## Lookup order
 

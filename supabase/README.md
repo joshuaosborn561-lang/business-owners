@@ -12,3 +12,14 @@ FL_SFTP_USER=... FL_SFTP_PASS=... python3 scripts/build_fl_sunbiz.py         # f
 BO_SUPABASE_URL=... BO_SUPABASE_KEY=... BO_LOAD_TOKEN=... \
   python3 scripts/load_registry_supabase.py --truncate                      # ~15 min, 2 connections
 ```
+
+## Table jobs (`20261028_table_jobs.sql`)
+
+Separate from the registry index above. Apply it in the project that holds the lead tables (campaignintelligence). It adds schema `bo_jobs` (token table, schema allowlist, job table) and token-checked RPCs `public.bo_tj_*` used by `start_table_job`. Create the service token once, outside git:
+
+```sql
+insert into bo_jobs.api_token (token_sha256, label)
+values (encode(sha256(convert_to('<random token>', 'utf8')), 'hex'), 'business-owners railway');
+```
+
+Allow another schema: `insert into bo_jobs.allowed_schema values ('client_x', true, true);` (and add it to `TABLE_JOBS_*_SCHEMAS` if those are set). Revoke access: `update bo_jobs.api_token set revoked_at = now();`.
