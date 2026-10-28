@@ -397,3 +397,22 @@ describe('runTableJob direct', () => {
     assert.equal(await runTableJob('tj-0000000000', makeDeps(new MemoryStore())), null);
   });
 });
+
+import { allocateBatchCost } from './tableJobs.js';
+import test from 'node:test';
+import assert2 from 'node:assert/strict';
+
+test('allocateBatchCost makes row cost_usd sum to the tracker spend', () => {
+  const rows = [
+    { source_id: '1', status: 'miss', waterfall_ready: false, cost_usd: 0.03 },
+    { source_id: '2', status: 'named', waterfall_ready: true, cost_usd: 0.01 },
+    { source_id: '3', status: 'miss', waterfall_ready: false, cost_usd: 0, coverage_reason: 'no_state' },
+  ] as any[];
+  allocateBatchCost(rows, 0.2);
+  assert2.ok(Math.abs(rows[0].cost_usd + rows[1].cost_usd - 0.2) < 1e-4);
+  assert2.equal(rows[2].cost_usd, 0);
+  assert2.ok(rows[0].cost_usd > rows[1].cost_usd);
+  const even = [{ source_id: 'a', status: 'miss', cost_usd: 0 }, { source_id: 'b', status: 'miss', cost_usd: 0 }] as any[];
+  allocateBatchCost(even, 0.1);
+  assert2.equal(even[0].cost_usd, 0.05);
+});

@@ -112,3 +112,8 @@ See [PLAN.md](PLAN.md) for tiers A / B / C.
 - `OWNER_PLAN_2026-10.md`: the current 50-state plan (tiers, buy list, roadmap, matching rules). Written from a fresh verification of every source on Oct 25 2026.
 - `research/2026-10-25/`: per-state findings with VERIFIED/UNVERIFIED tags and URLs, national datasets, paid vendors, and datacenter reachability.
 - `STATE_PLAYBOOK.md`: older notes; superseded by the plan where they disagree.
+
+### Table jobs: cost and name checks
+- `cost_usd` on each result row is the job's real tracked spend for its batch, allocated across the rows attempted (weighted by each lookup's own estimate). Row costs sum to the job `spend_usd`.
+- Owner names go through `checkPlausiblePersonName` (rejects business/page words, digits, one-letter surnames) for every source; web-sourced hits with staff titles (Manager, Supervisor, Assistant...) are not `waterfall_ready`.
+- California BizFile needs `APIFY_TOKEN` and `APIFY_PROXY_PASSWORD` on the service (Apify residential proxy).

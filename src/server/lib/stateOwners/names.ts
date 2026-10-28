@@ -1,3 +1,5 @@
+import { checkPlausiblePersonName } from './personName.js';
+
 const COMPANY_WORDS =
   /\b(INC|LLC|L\.?L\.?C\.?|INCORPORATED|LTD|LP|LLP|PLLC|PC|PA|CO|COMPANY|CORP|CORPORATION|CONSTRUCTION|BUILDERS?|ELECTRIC|ELECTRICAL|PLUMBING|ROOFING|SERVICES?|ADVISORS?|ADVISORY|GROUP|ASSOCIATES|HOLDINGS|PARTNERS|ENTERPRISES|VENTURES|CAPITAL|MANAGEMENT|CONSULTING|HOSPITAL|CLINIC|PRACTICE|DIVISION|PROPERTIES|INVESTMENTS|SOLUTIONS)\b/i;
 
@@ -118,7 +120,7 @@ export interface OfficerNameVerdict {
   last_name: string | null;
   full_name: string;
   review_flag: boolean;
-  reason?: 'place' | 'company' | 'partial' | 'invalid' | 'nav' | 'date' | 'title';
+  reason?: 'place' | 'company' | 'partial' | 'invalid' | 'nav' | 'date' | 'title' | 'nonperson';
 }
 
 /**
@@ -179,6 +181,9 @@ export function validateOfficerPersonName(
   }
   if (isJobTitlePhrase(`${split.first_name} ${split.last_name}`)) {
     return { ...empty, full_name: split.full_name_raw, reason: 'title' };
+  }
+  if (!checkPlausiblePersonName(split.first_name, split.last_name).ok) {
+    return { ...empty, full_name: split.full_name_raw, reason: 'nonperson' };
   }
   return {
     ok: true,

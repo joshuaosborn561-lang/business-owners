@@ -1,3 +1,4 @@
+import { isNonOwnerTitle, checkPlausiblePersonName } from '../personName.js';
 import { isRegistryAgentName, splitPersonName, validateOfficerPersonName } from '../names.js';
 import type { BoardSource, CoverageReason, OwnerConfidence, OwnerPerson, OwnerRole } from '../types.js';
 import { attachConfidence } from './confidence.js';
@@ -57,6 +58,8 @@ export function agentOnlyHit(
   });
 }
 
+const NON_REGISTRY_SOURCES = new Set(['linkedin', 'website', 'serper', 'hard_to_find', 'find_named_person', 'unmask_address', 'maps', 'dba']);
+
 export function isWaterfallReady(hit: WaterfallOwnerHit): boolean {
   if (hit.coverage_reason === 'agent_only' || hit.role === 'registered_agent') return false;
   if (
@@ -71,6 +74,9 @@ export function isWaterfallReady(hit: WaterfallOwnerHit): boolean {
   if (hit.review_flag) return false;
   if (!hit.first_name || !hit.last_name) return false;
   if (!validateOfficerPersonName(`${hit.first_name} ${hit.last_name}`).ok) return false;
+  if (!checkPlausiblePersonName(hit.first_name, hit.last_name).ok) return false;
+  // Web-sourced hits: a Manager / Supervisor / Assistant is not the owner. Registry rosters keep their own role logic.
+  if (NON_REGISTRY_SOURCES.has(String(hit.source)) && isNonOwnerTitle(hit.title)) return false;
   if (hit.source === 'serper' && hit.confidence !== 'high') return false;
   if (hit.confidence === 'low') return false;
   if (hit.source === 'website' && hit.corroborated !== true && (hit.confidence_score ?? 0) < 0.8) {
