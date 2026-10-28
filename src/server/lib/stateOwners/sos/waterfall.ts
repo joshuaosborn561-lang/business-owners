@@ -60,6 +60,16 @@ export function agentOnlyHit(
 
 const NON_REGISTRY_SOURCES = new Set(['linkedin', 'website', 'serper', 'hard_to_find', 'find_named_person', 'unmask_address', 'maps', 'dba']);
 
+const COMPANY_ECHO_SOURCES = new Set(['hard_to_find', 'serper']);
+
+/** True when every name token also appears in the company name. */
+export function nameEchoesCompany(first: string | null | undefined, last: string | null | undefined, company: string | null | undefined): boolean {
+  const words = (v: string) => String(v || '').toLowerCase().replace(/[^a-z\s'-]/g, ' ').split(/\s+/).filter((w) => w.length > 1);
+  const name = words(`${first || ''} ${last || ''}`);
+  const co = new Set(words(company || ''));
+  return name.length >= 2 && name.every((w) => co.has(w));
+}
+
 export function isWaterfallReady(hit: WaterfallOwnerHit): boolean {
   if (hit.coverage_reason === 'agent_only' || hit.role === 'registered_agent') return false;
   if (
@@ -77,6 +87,9 @@ export function isWaterfallReady(hit: WaterfallOwnerHit): boolean {
   if (!checkPlausiblePersonName(hit.first_name, hit.last_name).ok) return false;
   // Web-sourced hits: a Manager / Supervisor / Assistant is not the owner. Registry rosters keep their own role logic.
   if (NON_REGISTRY_SOURCES.has(String(hit.source)) && isNonOwnerTitle(hit.title)) return false;
+  // Free-text web hits (hard_to_find, serper) sometimes "find" the company name itself, e.g. a business called
+  // "Action Lanes" returning Action / Lanes. A real owner name is not made only of the company's own words.
+  if (COMPANY_ECHO_SOURCES.has(String(hit.source)) && nameEchoesCompany(hit.first_name, hit.last_name, hit.company_name)) return false;
   if (hit.source === 'serper' && hit.confidence !== 'high') return false;
   if (hit.confidence === 'low') return false;
   if (hit.source === 'website' && hit.corroborated !== true && (hit.confidence_score ?? 0) < 0.8) {
