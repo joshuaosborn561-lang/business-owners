@@ -60,12 +60,16 @@ SQL integration tests run against a throwaway Postgres + PostgREST (`TJ_TEST_*`,
 
 ## Lookup order
 
-0. **Free public files** (`openDataSources.ts`, $0, no bot walls): national overlays first (FMCSA census by phone/name for anything with a USDOT number; NPPES authorized official for healthcare), then the state's files: PA officers (`xvd7-5r2c`), CO trade names, OR CCB `rmi_name`, NY DMV owner_name + NYC DOB, WA L&I principal, MO liquor OWN/PART/MGR, Chicago license owners, IL IDFPR, TX TABC (passes the LLC name on when the licensee is an entity), DC Basic Business License owner. FL Sunbiz + IL DTA bulk (incl. corp president/secretary) run in the official step. Off with `OPEN_DATA_ENABLED=false`.
+0. **Free public files** (`openDataSources.ts`, $0, no bot walls): national overlays first (FMCSA census by phone/name for anything with a USDOT number; NPPES authorized official for healthcare), then the state's files: PA officers (`xvd7-5r2c`) + Philadelphia license holders, CO trade names, OR CCB `rmi_name`, NY DMV owner_name + NYC DOB, WA L&I principal, MO liquor OWN/PART/MGR, Chicago license owners, IL IDFPR, TX TDLR `owner_name` + TX TABC (passes the LLC name on when the licensee is an entity), CA LA County fictitious business names (`RegisteredOwnerName`) + SF registered businesses (`ownership_name`) + CA ABC daily export (sole-prop licensee; downloaded once a day and cached in memory), AK business-license `Owners`, DC Basic Business License owner. FL Sunbiz + IL DTA bulk (incl. corp president/secretary) run in the official step. Off with `OPEN_DATA_ENABLED=false`.
 1. **DBA → legal name** (Serper-first): site footer / privacy / terms / copyright, then `"<name>" <city> LLC OR Inc`, then Google Maps/GBP, then free county fictitious-business-name snippets.
 2. **Serper owner** for every state. High confidence (≥0.8) can skip SOS.
 3. **Official registry** after a Serper miss. Open from a datacenter: TX Comptroller JSON, KY, WV, MN, AL, AR, NE, ID, NM, ND, RI, SD, VT, DE, DC. Bot-walled (GA NC UT MO MS MT HI AK NH MA NV WA WY MI AZ IA KS IN TN VA OR SC): routed through the **unblocker** (`unblocker.ts`, Zyte / Bright Data / ScrapingBee / ScraperAPI via `UNBLOCKER_*` env, charged to `TOTAL_MAX_USD`) before Apify. CA hybrid stays on Apify.
 4. **Agent-only fallback:** About page → Serper LinkedIn → find-named-person. Registered agents count only when the agent is a person at the business address or the surname is in the company name.
 5. **Hard-to-find** and **LLC unmask by address** as before.
+
+### Free owner files by state
+
+See [`BULK_OWNER_SOURCES.md`](BULK_OWNER_SOURCES.md) for every state with a free bulk or open owner file, what is wired, and what is left (and why).
 
 ## Skip (structurally agent-only)
 
