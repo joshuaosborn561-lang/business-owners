@@ -12,6 +12,14 @@ import {
   resolveOpenDataOwners,
   resolvePaOpenData,
   resolveTxTabc,
+  resolveCaLaFbn,
+  resolveCaSfRegistry,
+  resolveCaAbc,
+  resetCaAbcCache,
+  abcPersonName,
+  resolveTxTdlr,
+  resolveAkBusinessLicense,
+  resolvePhiladelphia,
   sodaLike,
   titleRank,
 } from './openDataSources.js';
@@ -52,9 +60,12 @@ describe('open data helpers', () => {
   });
 
   it('runs national overlays for every state and state files where they exist', () => {
-    assert.deepEqual(openDataSourcesFor('PA'), ['fmcsa', 'nppes', 'pa_dos']);
-    assert.deepEqual(openDataSourcesFor('ny'), ['fmcsa', 'nppes', 'nyc_dob', 'ny_dmv']);
-    assert.deepEqual(openDataSourcesFor('OH'), ['fmcsa', 'nppes']);
+    assert.deepEqual(openDataSourcesFor('PA'), ['fmcsa', 'cms_owners', 'nppes', 'pa_dos', 'phl_bl', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('ny'), ['fmcsa', 'cms_owners', 'nppes', 'nyc_dob', 'ny_dmv', 'ny_corp_ceo', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('OH'), ['fmcsa', 'cms_owners', 'nppes', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('CA'), ['fmcsa', 'cms_owners', 'nppes', 'ca_la_fbn', 'ca_sf_reg', 'ca_abc', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('TX'), ['fmcsa', 'cms_owners', 'nppes', 'tx_tdlr', 'tx_tabc', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('AK'), ['fmcsa', 'cms_owners', 'nppes', 'ak_bl', 'form5500']);
   });
 });
 
@@ -176,5 +187,144 @@ describe('owner titles', () => {
     assert.equal(cleanTitle('Owner Michael Jordan', 'Michael', 'Jordan'), 'Owner');
     assert.equal(cleanTitle('Owner And Master Plumber.', 'Donna', 'Moore'), 'Owner and Master Plumber');
     assert.equal(cleanTitle(null), null);
+  });
+});
+
+function arcgis(rows: Array<Record<string, unknown>>) {
+  return { features: rows.map((attributes) => ({ attributes })) };
+}
+
+/** Build a one-entry deflated zip in memory (what the CA ABC export looks like). */
+async function zipOf(name: string, text: string): Promise<Buffer> {
+  const { deflateRawSync, crc32 } = await import('node:zlib');
+  const data = Buffer.from(text, 'latin1');
+  const comp = deflateRawSync(data);
+  const fn = Buffer.from(name);
+  const crc = crc32(data);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(8, 8);
+  local.writeUInt32LE(crc, 14); local.writeUInt32LE(comp.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(fn.length, 26);
+  const cd = Buffer.alloc(46);
+  cd.writeUInt32LE(0x02014b50, 0); cd.writeUInt16LE(20, 4); cd.writeUInt16LE(20, 6); cd.writeUInt16LE(8, 10);
+  cd.writeUInt32LE(crc, 16); cd.writeUInt32LE(comp.length, 20); cd.writeUInt32LE(data.length, 24); cd.writeUInt16LE(fn.length, 28); cd.writeUInt32LE(0, 42);
+  const cdOff = 30 + fn.length + comp.length;
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(1, 8); eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(46 + fn.length, 12); eocd.writeUInt32LE(cdOff, 16);
+  return Buffer.concat([local, fn, comp, cd, fn, eocd]);
+}
+
+describe('California open data', () => {
+  it('LA County FBN: names every person owner on the filing and skips abandoned owners', async () => {
+    const rows = [
+      { FilingNumber: '1', FiledTS: 2, FilingType: 'FBN Statement', BusinessName: 'LANZA MEAT CO.', BusinessCity: 'LOS ANGELES', RegisteredOwnerName: 'OTILIO RENE LANZA' },
+      { FilingNumber: '1', FiledTS: 2, FilingType: 'FBN Statement', BusinessName: 'LANZA MEAT CO.', BusinessCity: 'LOS ANGELES', RegisteredOwnerName: 'LUZ MARINA MARTINEZ' },
+      { FilingNumber: '0', FiledTS: 1, FilingType: 'FBN Statement', BusinessName: 'GAEL PLUMBING', BusinessCity: 'SYLMAR', RegisteredOwnerName: 'THALIA MORENO' },
+      { FilingNumber: '9', FiledTS: 3, FilingType: 'FBN Abandonment', BusinessName: 'GAEL PLUMBING', BusinessCity: 'SYLMAR', RegisteredOwnerName: 'THALIA MORENO' },
+    ];
+    const ctx: LookupContext = { live: false, fetch: fakeFetch([[/Fictitious_Business_Name/, arcgis(rows)]]) };
+    const r = await resolveCaLaFbn({ company_name: 'Lanza Meat Co', city: 'Los Angeles', state: 'CA' }, ctx);
+    assert.equal(r.result?.people.length, 2);
+    assert.equal(r.result?.open_data_source, 'ca_la_fbn');
+    assert.ok(isWaterfallReady(r.result!.people[0]));
+    const gone = await resolveCaLaFbn({ company_name: 'Gael Plumbing', city: 'Sylmar', state: 'CA' }, ctx);
+    assert.equal(gone.result, null);
+  });
+
+  it('LA County FBN: passes an LLC registrant on as the legal name', async () => {
+    const rows = [{ FilingNumber: '5', FiledTS: 1, FilingType: 'FBN Statement', BusinessName: "OSCAR'S PLUMBING & ROOTER", BusinessCity: 'PASADENA', RegisteredOwnerName: 'ANDERSEN COMMERCIAL PLUMBING, LLC' }];
+    const ctx: LookupContext = { live: false, fetch: fakeFetch([[/Fictitious_Business_Name/, arcgis(rows)]]) };
+    const r = await resolveCaLaFbn({ company_name: "Oscar's Plumbing & Rooter", city: 'Pasadena', state: 'CA' }, ctx);
+    assert.equal(r.result, null);
+    assert.equal(r.legal_name, 'ANDERSEN COMMERCIAL PLUMBING, LLC');
+  });
+
+  it('SF registry: ownership_name for a DBA', async () => {
+    const rows = [{ ownership_name: 'Gregory Alexander Bianchi', dba_name: 'Get Griit', city: 'San Francisco' }];
+    const ctx: LookupContext = { live: false, fetch: fakeFetch([[/g8m3-pdis/, rows]]) };
+    const r = await resolveCaSfRegistry({ company_name: 'Get Griit', city: 'San Francisco', state: 'CA' }, ctx);
+    assert.equal(r.result?.people[0].last_name?.toUpperCase(), 'BIANCHI');
+  });
+
+  it('ABC export: parses the zip, names sole-prop licensees, passes entities on as legal names', async () => {
+    assert.equal(abcPersonName('ROBERTS  DENNIS EARL'), 'DENNIS EARL ROBERTS');
+    assert.equal(abcPersonName('HEIRLOOM CAFE LLC'), null);
+    const csv = [
+      '﻿"Updated Wednesday"',
+      '"License Type","File Number","Lic or App","Type Status","Type Orig Iss Date","Expir Date","Fee Codes","Dup Counts","Master Ind","Term in # of Months","Geo Code",District,"Primary Name","Prem Addr 1"," Prem Addr 2","Prem City"," Prem State","Prem Zip","DBA Name","Mail Addr 1","Mail Addr 2","Mail City","Mail State","Mail Zip","Prem County","Prem Census Tract #"',
+      '20,00421169,APP,ACTIVE," "," ",P0,"  ",Y,12,4900,27,"ROBERTS  DENNIS EARL","1579 TRINITY RD"," ","GLEN ELLEN",CA,95442,"VALLEY VIEW WINE SALES"," "," "," "," "," ",SONOMA,1505.02',
+      '41,00000001,LIC,ACTIVE," "," ",P0,"  ",Y,12,4900,27,"HEIRLOOM CAFE LLC","1 MAIN"," ","SAN FRANCISCO",CA,94110,"HEIRLOOM CAFE"," "," "," "," "," ",SF,1',
+      '41,00000002,LIC,SUREND," "," ",P0,"  ",Y,12,4900,27,"GONE  PERSON","1 MAIN"," ","OAKLAND",CA,94110,"OLD BAR"," "," "," "," "," ",AL,1',
+    ].join('\r\n');
+    const zip = await zipOf('ABC-DailyDataExport.csv', csv);
+    resetCaAbcCache();
+    const ctx: LookupContext = { live: false, fetch: async () => new Response(zip, { status: 200 }) };
+    const sole = await resolveCaAbc({ company_name: 'Valley View Wine Sales', city: 'Glen Ellen', state: 'CA' }, ctx);
+    assert.match(sole.result?.people[0].first_name?.toUpperCase() || '', /^DENNIS/);
+    assert.equal(sole.result?.people[0].last_name?.toUpperCase(), 'ROBERTS');
+    const llc = await resolveCaAbc({ company_name: 'Heirloom Cafe', city: 'San Francisco', state: 'CA' }, ctx);
+    assert.equal(llc.result, null);
+    assert.equal(llc.legal_name, 'HEIRLOOM CAFE LLC');
+    const surrendered = await resolveCaAbc({ company_name: 'Old Bar', city: 'Oakland', state: 'CA' }, ctx);
+    assert.equal(surrendered.result, null);
+    resetCaAbcCache();
+  });
+});
+
+describe('TDLR, Alaska, Philadelphia', () => {
+  it('TDLR: owner_name behind a business entity, phone match wins', async () => {
+    const rows = [
+      { business_name: 'PLUMBING DOCTOR INC', owner_name: 'GONZALEZ, MICHAEL JOE', business_city_state_zip: 'EL PASO TX 79901', business_telephone: '9155550100', license_expiration_date_mmddccyy: '08/17/2099' },
+      { business_name: 'PLUMBING DOCTOR INC', owner_name: 'OLD, OWNER', business_city_state_zip: 'EL PASO TX 79901', license_expiration_date_mmddccyy: '01/01/2001' },
+    ];
+    const ctx: LookupContext = { live: false, fetch: fakeFetch([[/7358-krk7/, rows]]) };
+    const r = await resolveTxTdlr({ company_name: 'Plumbing Doctor', city: 'El Paso', state: 'TX' }, ctx);
+    assert.equal(r?.people[0].last_name?.toUpperCase(), 'GONZALEZ');
+    assert.equal(r?.open_data_source, 'tx_tdlr');
+  });
+
+  it('Alaska: person owners on an active license, single-token query (firewall rejects AND)', async () => {
+    let seen = '';
+    const rows = [{ Owners: "JOSEPH  O'DONNOGHUE", BusinessName: 'KODIAK PLUMBING AND HEATING', Status: 'Active', PhysicalCity: 'KODIAK' }];
+    const ctx: LookupContext = {
+      live: false,
+      fetch: async (u) => {
+        seen = decodeURIComponent(String(u));
+        return new Response(JSON.stringify(arcgis(rows)), { status: 200 });
+      },
+    };
+    const r = await resolveAkBusinessLicense({ company_name: 'Kodiak Plumbing and Heating', city: 'Kodiak', state: 'AK' }, ctx);
+    assert.match(r.result?.people[0].first_name?.toUpperCase() || '', /^JOSEPH/);
+    assert.ok(!/ AND /.test(seen.replace(/\+/g, ' ')), 'no AND in the where clause');
+  });
+
+  it('Philadelphia: individual license holder named, other cities skipped', async () => {
+    const payload = { rows: [{ business_name: 'ROGER ROSS (ROGER ROSS PLUMBING & HEATING)', legalname: 'ROGER ROSS', legalentitytype: 'Individual', legalfirstname: 'ROGER', legallastname: 'ROSS', licensetype: 'Commercial Activity License' }] };
+    const ctx: LookupContext = { live: false, fetch: fakeFetch([[/phl\.carto\.com/, payload]]) };
+    const r = await resolvePhiladelphia({ company_name: 'Roger Ross Plumbing & Heating', city: 'Philadelphia', state: 'PA' }, ctx);
+    assert.equal(r.result?.people[0].last_name?.toUpperCase(), 'ROSS');
+    const pgh = await resolvePhiladelphia({ company_name: 'Roger Ross Plumbing & Heating', city: 'Pittsburgh', state: 'PA' }, ctx);
+    assert.equal(pgh.result, null);
+  });
+});
+
+describe('NY business corporation CEO', () => {
+  it('names the biennial-statement CEO, flips LAST, FIRST, and refuses a corporate CEO', async () => {
+    const { resolveNyCorpCeo } = await import('./openDataSources.js');
+    const rows = [
+      { dos_id: '1', current_entity_name: 'EMPIREWIDGETS INC.', entity_type: 'DOMESTIC BUSINESS CORPORATION', chairman_name: 'EXAMPLE, CASEY', location_city: 'ALBANY', location_zip: '12207' },
+      { dos_id: '2', current_entity_name: 'HOLDCO SERVICES INC.', entity_type: 'DOMESTIC BUSINESS CORPORATION', chairman_name: 'PARENT HOLDINGS LLC', location_city: 'BUFFALO' },
+    ];
+    const ctx: LookupContext = { live: false, fetch: fakeFetch([[/n9v6-gdp6/, rows]]) };
+    const r = await resolveNyCorpCeo({ company_name: 'Empire Widgets', city: 'Albany', state: 'NY' }, ctx);
+    assert.equal(r?.people[0].first_name?.toUpperCase(), 'CASEY');
+    assert.equal(r?.people[0].last_name?.toUpperCase(), 'EXAMPLE');
+    assert.equal(r?.people[0].title, 'CEO');
+    assert.equal(r?.open_data_source, 'ny_corp_ceo');
+    assert.ok(isWaterfallReady(r!.people[0]));
+    const corp = await resolveNyCorpCeo({ company_name: 'Holdco Services', city: 'Buffalo', state: 'NY' }, ctx);
+    assert.equal(corp, null);
+    const farZip = await resolveNyCorpCeo({ company_name: 'Empire Widgets Co', city: 'Troy', state: 'NY', zip: '12180' }, ctx);
+    assert.equal(farZip, null);
   });
 });

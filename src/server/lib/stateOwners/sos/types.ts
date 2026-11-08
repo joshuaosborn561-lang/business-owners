@@ -61,6 +61,12 @@ export interface NameLookupInput {
   address?: string | null;
   /** Parcel / tax-bill mailing address (e.g. from permit-pulling parcels). Preferred by the unmask step. */
   mailing_address?: string | null;
+  /** 5-digit ZIP when known. Name matches across different ZIPs are refused by the CMS and Form 5500 overlays. */
+  zip?: string | null;
+  /** Employer EIN when known (joins Form 5500). */
+  ein?: string | null;
+  /** Organization NPI when known (joins CMS ownership). */
+  npi?: string | null;
   list_id?: string;
   lead_id?: number;
 }
@@ -115,6 +121,8 @@ export interface NameLookupResult {
   mailing_address?: string | null;
   /** Which open-data source produced the hit (pa_dos, fmcsa, nppes, ...). */
   open_data_source?: string | null;
+  /** CMS ownership: private equity / REIT owners and organizational owners on the provider. */
+  ownership_flags?: { private_equity: boolean; reit: boolean; org_owners: string[] } | null;
   /** USD spent on the unblocker (residential fetch API) for this row. */
   unblocker_usd?: number;
   via_unblocker?: boolean;

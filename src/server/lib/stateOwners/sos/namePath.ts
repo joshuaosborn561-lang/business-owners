@@ -226,7 +226,7 @@ async function resolveIllinois(input: NameLookupInput, ctx?: LookupContext): Pro
   };
 }
 
-async function resolveOfficialNameLookup(
+export async function resolveOfficialNameLookup(
   input: NameLookupInput,
   ctx?: LookupContext,
 ): Promise<NameLookupResult> {

@@ -6,6 +6,8 @@ This document supersedes `STATE_PLAYBOOK.md` wherever the two disagree. Nothing 
 
 Measured baseline (381 rows, Oct 21): **51% named**. Most hits came from LinkedIn and web search, not registries. Only 11 states were at or above 70%.
 
+> **Nov 8 2026 update.** Two national sources were added after this plan: CMS provider ownership (HHA, hospice, SNF, RHC, hospital) and the DOL Form 5500 plan signer, which names an employer-side person for about 320K employers with 15 to 499 participants in every state, including the agent-only states. Evidence: `research/2026-11-08/universe-sources.md`.
+
 ---
 
 ## 1. What the research changed
@@ -59,26 +61,26 @@ Registered-agent promotion rules stay as they are (person RA at the business add
 
 | State | Source | What it gives | Status |
 |---|---|---|---|
-| PA | data.pa.gov `xvd7-5r2c` (4.17M rows, monthly) | Officers and governors with names for every registered business | Verified today; not loaded |
-| IL | ilsos.gov DTA daily zips | Corp president + secretary (Master file), LLC managers/members, assumed names | Loaded, but corp officers never parsed |
+| PA | data.pa.gov `xvd7-5r2c` (4.17M rows, monthly) | Officers and governors with names for every registered business | Live SODA query |
+| IL | ilsos.gov DTA daily zips | Corp president + secretary (Master file), LLC managers/members, assumed names | Loaded; corp president/secretary parsed from the Master file |
 | FL | Sunbiz quarterly `cordata` + `ficdata` via public SFTP | 6 officer slots per entity, 10 owner slots per fictitious name | Loaded; refresh quarterly; SFTP creds are on the FL DOS page |
-| TX | Comptroller `data-search/franchise-tax` JSON + `9cir-efmm` + TDLR `7358-krk7` + TABC `7hf9-qc9f` | PIR officers with titles (live, free, open), TDLR `OWNER NAME`, TABC owner | Live adapter exists; load the three Socrata files for matching |
+| TX | Comptroller `data-search/franchise-tax` JSON + `9cir-efmm` + TDLR `7358-krk7` + TABC `7hf9-qc9f` | PIR officers with titles (live, free, open), TDLR `OWNER NAME`, TABC owner | Comptroller, TDLR and TABC live (TDLR added Nov 5) |
 | CT | data.ct.gov `ka36-64k6` principals + `n7gp-d28j` master + `ngch-56tr` licenses + `gwv2-eswx` liquor permittees | Principals with titles, business email, license holder + business name | Live SODA exists; load locally for fuzzy matching |
-| DC | DCGIS FEEDS/DCRA FeatureServer 0 | Owner first/last on ~44% of active licenses | Verified today; not built |
-| CO | `u7sb-g482` trade names, `4ykn-tg5h` entities, `7s5z-vewr` DORA, `ier5-5ms2` liquor, `8upq-58vz` UCC debtors | Trade-name registrant first/last; person RAs; licensee + entity name | Entities live; trade names not used |
-| OR | `tckn-sxa6` (ABN owners, person RAs), CCB `g77e-6bhs` `rmi_name`, BCD `vhbr-cuaq`, OLCC `srxe-qkm2` | DBA owners, contractor responsible individual | Live SODA exists; fix the LLC assumption; add CCB |
-| NY | `n9v6-gdp6`, DMV `nhjr-rpi2` `owner_name`, NYC DOB `t8hj-ruu2`, DCWP `w7w3-xahh` | Process name (person in ~1/3 of new LLCs), auto-trade owners, NYC trades | Live SODA exists; add the three license files |
-| IA | dataset 1052 contractor registrations, dataset 554 entities (RA only) | Contractor owner first/last + email + phone | Not built |
-| WA | L&I `4xk5-x9j6` `PrincipalName`, `m8qx-ubtq` `PrimaryPrincipalName`, LCB lists, `9dee-kzm5` renewals | Contractor principals (owners) daily; UBI join key | L&I known, not loaded |
+| DC | DCGIS FEEDS/DCRA FeatureServer 0 | Owner first/last on ~44% of active licenses | Live |
+| CO | `u7sb-g482` trade names, `4ykn-tg5h` entities, `7s5z-vewr` DORA, `ier5-5ms2` liquor, `8upq-58vz` UCC debtors | Trade-name registrant first/last; person RAs; licensee + entity name | Entities + trade names live |
+| OR | `tckn-sxa6` (ABN owners, person RAs), CCB `g77e-6bhs` `rmi_name`, BCD `vhbr-cuaq`, OLCC `srxe-qkm2` | DBA owners, contractor responsible individual | Live (ABN-only rule for authorized reps); CCB live |
+| NY | `n9v6-gdp6`, DMV `nhjr-rpi2` `owner_name`, NYC DOB `t8hj-ruu2`, DCWP `w7w3-xahh` | Process name (person in ~1/3 of new LLCs), auto-trade owners, NYC trades | Live; DMV + NYC DOB live. DCWP has no owner field (skip) |
+| IA | dataset 1052 contractor registrations, dataset 554 entities (RA only) | Contractor owner first/last + email + phone | Not built: dataset moved to the JS-only Iowa Data Hub, no public API found Nov 5 |
+| WA | L&I `4xk5-x9j6` `PrincipalName`, `m8qx-ubtq` `PrimaryPrincipalName`, LCB lists, `9dee-kzm5` renewals | Contractor principals (owners) daily; UBI join key | `m8qx-ubtq` primary principal live |
 | MN | DLI nightly `MNDLILicRegCertExport.zip` (260k rows, phone, email) | Contractor/electrical/plumbing businesses and qualifying persons | Not built (see Tier B for the SOS file) |
-| MO | data.mo.gov `yyhn-562y` alcohol licenses | Manager/owner names for hospitality | Not built |
+| MO | data.mo.gov `yyhn-562y` alcohol licenses | Manager/owner names for hospitality | Live |
 | NE | NLCC active license roster xlsx | `Manager Name` + licensee for bars/restaurants | Not built |
-| CA | CSLB Personnel + License Master (free; download rejected from datacenter, fetch from a residential IP or Apify), ABC daily export, LA County FBN ArcGIS `RegisteredOwnerName`, SF `g8m3-pdis` `ownership_name`, Riverside daily FBN xlsx | Contractor personnel with titles; bar/restaurant licensee; LA/SF DBA owners | None loaded |
+| CA | CSLB Personnel + License Master (free; download rejected from datacenter, fetch from a residential IP or Apify), ABC daily export, LA County FBN ArcGIS `RegisteredOwnerName`, SF `g8m3-pdis` `ownership_name`, Riverside daily FBN xlsx | Contractor personnel with titles; bar/restaurant licensee; LA/SF DBA owners | LA FBN, SF registry and ABC export live (Nov 5). CSLB and Riverside not built (WAF / xlsx) |
 | OH | publicfiles.ohiosos.gov monthly `WI0100R`/`WI0050R` new-filing files (agent + business associate names) | Organizer/signer for ~12k new LLCs a month; only new filings | Start archiving monthly via unblocker |
-| AK | DCCED corporations + business-license CSVs (403 from datacenter; ArcGIS mirror has `Owners`) | Officials and license owners | Fetch from residential IP |
-| IL (city) | Chicago `r5kz-chrr` licenses + `ezma-pppn` owners, IDFPR `pzzh-kp68` | Owner names for all Chicago licensees; salon/roofer/broker business names | Not built |
-| PA (city) | Philadelphia Carto `business_licenses`, `com_act_licenses`; PA tobacco `ut72-sft8` | Legal first/last on Philly licenses | Not built |
-| National | FMCSA `az4n-8mr2`, NPPES, PPP FOIA, SAM Public V2 | See section 1 | Not built |
+| AK | DCCED corporations + business-license CSVs (403 from datacenter; ArcGIS mirror has `Owners`) | Officials and license owners | ArcGIS `Owners` live (Nov 5); corporations CSV still needs a residential IP |
+| IL (city) | Chicago `r5kz-chrr` licenses + `ezma-pppn` owners, IDFPR `pzzh-kp68` | Owner names for all Chicago licensees; salon/roofer/broker business names | Live |
+| PA (city) | Philadelphia Carto `business_licenses`, `com_act_licenses`; PA tobacco `ut72-sft8` | Legal first/last on Philly licenses | `business_licenses` live (Nov 5, non-rental only) |
+| National | FMCSA `az4n-8mr2`, NPPES, PPP FOIA, SAM Public V2 | See section 1 | FMCSA + NPPES live; PPP and SAM not built |
 
 ### Tier B: cheap official bulk with officers. Buy, in this order.
 

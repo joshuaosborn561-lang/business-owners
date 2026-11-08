@@ -15,6 +15,19 @@
  *  dc_bbl      DCGIS FEEDS/DCRA layer 0    Basic Business License, BUSINESSOWNERFIRST/LASTNAME
  *  fmcsa       data.transportation.gov az4n-8mr2  USDOT census, company_officer_1/2 + email + cell
  *  nppes       npiregistry.cms.hhs.gov     Type-2 organizations, authorized official + title
+ *  ca_la_fbn   LA County FBN ArcGIS        fictitious business names, RegisteredOwnerName (one row per owner)
+ *  ca_sf_reg   data.sf.gov g8m3-pdis       SF registered business locations, ownership_name
+ *  ca_abc      abc.ca.gov DailyExport-CSV  statewide alcohol licenses, Primary Name (person for sole props) + DBA
+ *  tx_tdlr     data.texas.gov 7358-krk7    TDLR licenses, owner_name per business (A/C, electricians, etc.)
+ *  ak_bl       AK DCCED ArcGIS layer 2     statewide business licenses, Owners
+ *  phl_bl      phl.carto.com business_licenses  Philadelphia licenses, legal first/last for individuals
+ *  cms_owners  data.cms.gov All Owners + Enrollments  HHA / hospice / SNF / RHC / hospital owners with ownership %, PE + REIT flags
+ *  ny_corp_ceo data.ny.gov n9v6-gdp6        NY business corporations, CEO from the biennial statement (chairman_name); LLCs have none
+ *  form5500    client_pe.bo_universe (DOL Form 5500 bulk, loaded by scripts/build_universe.ts)  plan signer by EIN / name+ZIP / phone
+ *
+ * CA added 2026-11-05: CA SOS sells/publishes no bulk entity file, so the free
+ * owner files are county FBN (LA), SF registry and the ABC export. CSLB personnel
+ * is free but WAF-blocked from datacenter IPs (see research/2026-10-25).
  *
  * All verified live on 2026-10-25 (see research/2026-10-25). Column names are
  * the dataset field names. Every source returns waterfall-shaped hits through
@@ -25,6 +38,11 @@ import type { LookupContext } from './context.js';
 import { ctxFetch } from './context.js';
 import { ilNormName } from './ilLlc.js';
 import { hitsFromRoster, type RosterEntry } from './officers.js';
+import { firstZipEntry } from './zipEntry.js';
+import { CMS_TYPES, cmsDatasetIds, cmsQueryUrl, summarizeCmsOwners, type CmsType } from '../../universe/cms.js';
+import { F5500_TITLE } from '../../universe/form5500.js';
+import { UniverseStore } from '../../universe/store.js';
+import { zip5 as zip5Of } from '../../universe/types.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
 
 export type OpenDataSourceId =
@@ -40,7 +58,16 @@ export type OpenDataSourceId =
   | 'tx_tabc'
   | 'dc_bbl'
   | 'fmcsa'
-  | 'nppes';
+  | 'nppes'
+  | 'ca_la_fbn'
+  | 'ca_sf_reg'
+  | 'ca_abc'
+  | 'tx_tdlr'
+  | 'ak_bl'
+  | 'phl_bl'
+  | 'cms_owners'
+  | 'form5500'
+  | 'ny_corp_ceo';
 
 export interface OpenDataOutcome {
   result: NameLookupResult | null;
@@ -157,7 +184,7 @@ function made(
 }
 
 /** Prefer a city match; otherwise accept a lone exact-name candidate. */
-function pickCandidate<T>(
+export function pickCandidate<T>(
   rows: T[],
   input: NameLookupInput,
   nameOf: (r: T) => string,
@@ -596,26 +623,494 @@ export async function resolveNppes(input: NameLookupInput, ctx?: LookupContext):
 }
 
 // ---------------------------------------------------------------------------
+// ArcGIS helper (LA County FBN, Alaska business licenses)
+// ---------------------------------------------------------------------------
+function arcgisLike(cols: string[], tokens: string[]): string | null {
+  if (!tokens.length || !cols.length) return null;
+  const esc = (t: string) => t.replace(/'/g, "''");
+  const perCol = cols.map((c) => tokens.map((t) => `UPPER(${c}) LIKE '%${esc(t)}%'`).join(' AND '));
+  return perCol.length === 1 ? perCol[0] : perCol.map((x) => `(${x})`).join(' OR ');
+}
+
+async function arcgisRows(ctx: LookupContext | undefined, base: string, where: string, outFields: string, limit = 200): Promise<{ url: string; rows: Array<Record<string, string | number | null>> }> {
+  const params = new URLSearchParams({ where, outFields, resultRecordCount: String(limit), f: 'json' });
+  const url = `${base}?${params.toString()}`;
+  const j = (await getJson(ctx, url)) as { features?: Array<{ attributes: Record<string, string | number | null> }> } | null;
+  return { url, rows: (j?.features || []).map((f) => f.attributes) };
+}
+
+const str = (v: unknown) => (v === null || v === undefined ? '' : String(v)).replace(/\s+/g, ' ').trim();
+
+// ---------------------------------------------------------------------------
+// California: LA County fictitious business names (RegisteredOwnerName)
+// ---------------------------------------------------------------------------
+export const CA_LA_FBN_URL = 'https://services.arcgis.com/RmCCgQtiZLDCtblq/arcgis/rest/services/Fictitious_Business_Name/FeatureServer/0/query';
+
+export async function resolveCaLaFbn(input: NameLookupInput, ctx?: LookupContext): Promise<{ result: NameLookupResult | null; legal_name: string | null }> {
+  const where = arcgisLike(['BusinessName'], queryTokens(input.company_name));
+  if (!where) return { result: null, legal_name: null };
+  const { url, rows } = await arcgisRows(ctx, CA_LA_FBN_URL, where, 'FilingNumber,FiledTS,FilingType,BusinessType,BusinessName,BusinessCity,RegisteredOwnerName', 300);
+  const live = rows.filter((r) => str(r.RegisteredOwnerName) && !/abandon|withdraw/i.test(str(r.FilingType)));
+  // An abandonment names the owner who gave the name up; drop that owner's earlier statements for the same name.
+  const gone = new Set(
+    rows.filter((r) => /abandon|withdraw/i.test(str(r.FilingType))).map((r) => `${ilNormName(str(r.BusinessName))}|${str(r.RegisteredOwnerName).toUpperCase()}`),
+  );
+  const kept = live
+    .filter((r) => !gone.has(`${ilNormName(str(r.BusinessName))}|${str(r.RegisteredOwnerName).toUpperCase()}`))
+    .sort((a, b) => Number(b.FiledTS || 0) - Number(a.FiledTS || 0));
+  const pick = pickCandidate(kept, input, (r) => str(r.BusinessName), (r) => str(r.BusinessCity));
+  if (!pick) return { result: null, legal_name: null };
+  const filing = str(pick.row.FilingNumber);
+  const owners = kept.filter((r) => str(r.FilingNumber) === filing).map((r) => str(r.RegisteredOwnerName));
+  const roster: RosterEntry[] = [...new Set(owners)]
+    .filter((n) => isPerson(n, input.city))
+    .map((n) => ({ name: n, title: 'Owner (fictitious business name)', role: 'owner' as const, labeled: true }));
+  if (roster.length) {
+    return {
+      result: made(input, roster, url, pick.method, pick.cityMatch, 'ca_la_fbn', { business_name: str(pick.row.BusinessName), dba_source: 'fbn' }),
+      legal_name: null,
+    };
+  }
+  return { result: null, legal_name: owners[0] || null };
+}
+
+// ---------------------------------------------------------------------------
+// California: San Francisco registered business locations (ownership_name)
+// ---------------------------------------------------------------------------
+export const CA_SF_REG_URL = 'https://data.sf.gov/resource/g8m3-pdis.json';
+
+export async function resolveCaSfRegistry(input: NameLookupInput, ctx?: LookupContext): Promise<{ result: NameLookupResult | null; legal_name: string | null }> {
+  const w = sodaLike(['dba_name', 'ownership_name'], queryTokens(input.company_name));
+  if (!w) return { result: null, legal_name: null };
+  const url = `${CA_SF_REG_URL}?$where=${encodeURIComponent(`(${w}) AND dba_end_date IS NULL`)}&$limit=200`;
+  const rows = (await soda(ctx, url)).filter((r) => r.ownership_name);
+  const pick =
+    pickCandidate(rows, input, (r) => r.dba_name || '', (r) => r.city) || pickCandidate(rows, input, (r) => r.ownership_name || '', (r) => r.city);
+  if (!pick) return { result: null, legal_name: null };
+  const owner = str(pick.row.ownership_name);
+  if (isPerson(owner, input.city)) {
+    return {
+      result: made(input, [{ name: owner, title: 'Owner', role: 'owner', labeled: true }], url, pick.method, pick.cityMatch, 'ca_sf_reg', {
+        business_name: pick.row.dba_name || owner,
+      }),
+      legal_name: null,
+    };
+  }
+  return { result: null, legal_name: owner || null };
+}
+
+// ---------------------------------------------------------------------------
+// California ABC: statewide daily export (zip, ~7 MB, ~130k rows), cached per process
+// ---------------------------------------------------------------------------
+export const CA_ABC_URL = 'https://www.abc.ca.gov/wp-content/uploads/DailyExport-CSV.zip';
+const CA_ABC_TTL_MS = 24 * 3600_000;
+
+export interface CaAbcRow { primary: string; dba: string; city: string; status: string; type: string }
+let abcCache: { at: number; index: Map<string, CaAbcRow[]> } | null = null;
+let abcLoading: Promise<Map<string, CaAbcRow[]> | null> | null = null;
+
+export function resetCaAbcCache(): void {
+  abcCache = null;
+  abcLoading = null;
+}
+
+/** RFC 4180-ish line splitter (quoted fields, doubled quotes). The ABC export has no embedded newlines. */
+export function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') q = false;
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') {
+      out.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+export function indexCaAbc(csv: string): Map<string, CaAbcRow[]> {
+  const index = new Map<string, CaAbcRow[]>();
+  const lines = csv.replace(/^﻿/, '').split(/\r?\n/);
+  const hi = lines.findIndex((l) => /"?License Type"?\s*,/.test(l));
+  if (hi < 0) return index;
+  const head = splitCsvLine(lines[hi]).map((h) => h.trim().toLowerCase());
+  const col = (name: string) => head.indexOf(name);
+  const [cP, cD, cC, cS, cT] = [col('primary name'), col('dba name'), col('prem city'), col('type status'), col('license type')];
+  if (cP < 0 || cD < 0) return index;
+  for (const line of lines.slice(hi + 1)) {
+    if (!line) continue;
+    const c = splitCsvLine(line);
+    // Keep the raw spacing of Primary Name: the double space marks a person ("LAST  FIRST").
+    const row: CaAbcRow = { primary: String(c[cP] || '').trim(), dba: str(c[cD]), city: str(c[cC]), status: str(c[cS]), type: str(c[cT]) };
+    if (!row.primary || !/^(ACTIVE|PEND)/i.test(row.status)) continue;
+    for (const k of new Set([ilNormName(row.dba), ilNormName(row.primary)])) {
+      if (k.length < 3) continue;
+      const list = index.get(k) || [];
+      list.push(row);
+      index.set(k, list);
+    }
+  }
+  return index;
+}
+
+async function loadCaAbc(ctx?: LookupContext): Promise<Map<string, CaAbcRow[]> | null> {
+  if (abcCache && Date.now() - abcCache.at < CA_ABC_TTL_MS) return abcCache.index;
+  if (abcLoading) return abcLoading;
+  abcLoading = (async () => {
+    try {
+      const res = await ctxFetch(ctx)(CA_ABC_URL, { signal: AbortSignal.timeout(90_000) } as RequestInit);
+      if (!res.ok) return null;
+      const csv = firstZipEntry(Buffer.from(await res.arrayBuffer()));
+      if (!csv) return null;
+      const index = indexCaAbc(csv.toString('latin1'));
+      if (!index.size) return null;
+      abcCache = { at: Date.now(), index };
+      return index;
+    } catch {
+      return null;
+    } finally {
+      abcLoading = null;
+    }
+  })();
+  return abcLoading;
+}
+
+/** ABC sole-prop licensees are "LAST  FIRST MIDDLE" (two spaces after the surname). */
+export function abcPersonName(primary: string): string | null {
+  const m = String(primary || '').match(/^([A-Z][A-Z'.-]*(?: [A-Z][A-Z'.-]*)?)\s{2,}([A-Z][A-Z'. -]*)$/);
+  return m ? `${m[2].trim()} ${m[1].trim()}`.replace(/\s+/g, ' ') : null;
+}
+
+export async function resolveCaAbc(input: NameLookupInput, ctx?: LookupContext): Promise<{ result: NameLookupResult | null; legal_name: string | null }> {
+  const index = await loadCaAbc(ctx);
+  if (!index) return { result: null, legal_name: null };
+  const keys = [...new Set([ilNormName(input.company_name), ilNormName(String(input.company_name).split(/\s[-–|:]\s|\s\(|\|/)[0])])].filter((k) => k.length >= 3);
+  const rows = [...new Set(keys.flatMap((k) => index.get(k) || []))];
+  const pick =
+    pickCandidate(rows, input, (r) => r.dba || r.primary, (r) => r.city) || pickCandidate(rows, input, (r) => r.primary, (r) => r.city);
+  if (!pick) return { result: null, legal_name: null };
+  const raw = String(pick.row.primary).replace(/[ \t]+$/, '');
+  const person = abcPersonName(raw);
+  if (person && isPerson(person, input.city)) {
+    return {
+      result: made(input, [{ name: person, title: 'Licensee (owner)', role: 'owner', labeled: true }], CA_ABC_URL, pick.method, pick.cityMatch, 'ca_abc', {
+        business_name: pick.row.dba || pick.row.primary,
+      }),
+      legal_name: null,
+    };
+  }
+  return { result: null, legal_name: str(pick.row.primary) || null };
+}
+
+// ---------------------------------------------------------------------------
+// Texas TDLR licenses: 7358-krk7 (owner_name per business)
+// ---------------------------------------------------------------------------
+export const TX_TDLR_URL = 'https://data.texas.gov/resource/7358-krk7.json';
+
+function tdlrCity(cityStateZip: string | undefined): string {
+  return String(cityStateZip || '').replace(/\s+[A-Z]{2}\s+\d{5}(-\d{4})?\s*$/, '').trim();
+}
+
+function tdlrExpiredLongAgo(mmddccyy: string | undefined): boolean {
+  const m = String(mmddccyy || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return false;
+  const t = Date.UTC(Number(m[3]), Number(m[1]) - 1, Number(m[2]));
+  return t < Date.now() - 180 * 86400_000;
+}
+
+export async function resolveTxTdlr(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult | null> {
+  const phone = phoneDigits(input.phone);
+  const w = sodaLike(['business_name'], queryTokens(input.company_name));
+  const where = phone && w ? `(${w}) OR business_telephone='${phone}'` : w;
+  if (!where) return null;
+  const url = `${TX_TDLR_URL}?$where=${encodeURIComponent(where)}&$limit=200`;
+  const rows = (await soda(ctx, url)).filter((r) => r.owner_name && !tdlrExpiredLongAgo(r.license_expiration_date_mmddccyy));
+  const byPhone = phone ? rows.find((r) => phoneDigits(r.business_telephone) === phone) : null;
+  const pick = byPhone
+    ? { row: byPhone, method: 'exact' as const, cityMatch: true }
+    : pickCandidate(rows, input, (r) => r.business_name || '', (r) => tdlrCity(r.business_city_state_zip));
+  if (!pick) return null;
+  const name = lastFirstToFirstLast(pick.row.owner_name);
+  if (!isPerson(name, input.city)) return null;
+  return made(input, [{ name, title: 'Owner', role: 'owner', labeled: true }], url, pick.method, pick.cityMatch, 'tx_tdlr', {
+    business_name: pick.row.business_name,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Alaska business licenses: DCCED ArcGIS (Owners)
+// ---------------------------------------------------------------------------
+export const AK_BL_URL = 'https://maps.commerce.alaska.gov/server/rest/services/Economics_Related/Business_Licenses/MapServer/2/query';
+
+export async function resolveAkBusinessLicense(input: NameLookupInput, ctx?: LookupContext): Promise<{ result: NameLookupResult | null; legal_name: string | null }> {
+  // The DCCED firewall rejects a where clause containing AND, so query on the most distinctive word and match locally.
+  const longest = [...queryTokens(input.company_name, 4)].sort((a, b) => b.length - a.length).slice(0, 1);
+  const where = arcgisLike(['BusinessName'], longest);
+  if (!where) return { result: null, legal_name: null };
+  const { url, rows } = await arcgisRows(ctx, AK_BL_URL, where, 'Owners,BusinessName,Status,PhysicalCity', 1000);
+  const withOwner = rows.filter((r) => str(r.Owners));
+  const active = withOwner.filter((r) => /^active/i.test(str(r.Status)));
+  const pick = pickCandidate(active.length ? active : withOwner, input, (r) => str(r.BusinessName), (r) => str(r.PhysicalCity));
+  if (!pick) return { result: null, legal_name: null };
+  const owners = str(pick.row.Owners);
+  const roster: RosterEntry[] = owners
+    .split(/\s*;\s*|\s+&\s+|\s+AND\s+/i)
+    .map((n) => n.trim())
+    .filter((n) => isPerson(n, input.city))
+    .map((n) => ({ name: n, title: 'Owner (business license)', role: 'owner' as const, labeled: true }));
+  if (roster.length) {
+    return { result: made(input, roster, url, pick.method, pick.cityMatch, 'ak_bl', { business_name: str(pick.row.BusinessName) }), legal_name: null };
+  }
+  return { result: null, legal_name: owners || null };
+}
+
+// ---------------------------------------------------------------------------
+// Philadelphia business licenses (Carto SQL): legal first/last for individuals
+// ---------------------------------------------------------------------------
+export const PHL_BL_URL = 'https://phl.carto.com/api/v2/sql';
+
+/** "BRUCE TINNENY (TINNERY PLUMBING & HEATING INC)" -> the trade name inside the parentheses, else the whole name. */
+function phlTradeName(businessName: string): string {
+  const m = String(businessName || '').match(/\(([^)]+)\)\s*$/);
+  return m && !/^rental$/i.test(m[1].trim()) ? m[1] : String(businessName || '');
+}
+
+export async function resolvePhiladelphia(input: NameLookupInput, ctx?: LookupContext): Promise<{ result: NameLookupResult | null; legal_name: string | null }> {
+  if (!cityEq(input.city, 'Philadelphia')) return { result: null, legal_name: null };
+  const toks = queryTokens(input.company_name);
+  if (!toks.length) return { result: null, legal_name: null };
+  const like = (col: string) => toks.map((t) => `upper(${col}) like '%${t.replace(/'/g, "''")}%'`).join(' AND ');
+  const q =
+    `select business_name, legalname, legalentitytype, legalfirstname, legallastname, licensetype from business_licenses ` +
+    `where licensestatus = 'Active' and licensetype <> 'Rental' and ((${like('business_name')}) or (${like('legalname')})) limit 200`;
+  const url = `${PHL_BL_URL}?q=${encodeURIComponent(q)}`;
+  const j = (await getJson(ctx, url)) as { rows?: Array<Record<string, string | null>> } | null;
+  const rows = j?.rows || [];
+  const pick =
+    pickCandidate(rows, input, (r) => phlTradeName(r.business_name || ''), () => 'Philadelphia') ||
+    pickCandidate(rows, input, (r) => r.legalname || '', () => 'Philadelphia');
+  if (!pick) return { result: null, legal_name: null };
+  const r = pick.row;
+  if (/individual/i.test(r.legalentitytype || '') && r.legallastname) {
+    const name = personName(r.legalfirstname, r.legallastname);
+    if (isPerson(name, input.city)) {
+      return {
+        result: made(input, [{ name, title: 'Owner (license holder)', role: 'owner', labeled: true }], url, pick.method, true, 'phl_bl', {
+          business_name: phlTradeName(r.business_name || ''),
+        }),
+        legal_name: null,
+      };
+    }
+  }
+  return { result: null, legal_name: str(r.legalname) || null };
+}
+
+// ---------------------------------------------------------------------------
+// New York business corporations: n9v6-gdp6 chairman_name (the CEO named on the biennial statement)
+// ---------------------------------------------------------------------------
+export const NY_CORP_URL = 'https://data.ny.gov/resource/n9v6-gdp6.json';
+/** CEO names exist only for corporations. LLCs file no names, so they stay agent-only. Verified 2026-11-08: 469,721 corps. */
+const NY_CORP_TYPES = ['DOMESTIC BUSINESS CORPORATION', 'FOREIGN BUSINESS CORPORATION', 'DOMESTIC PROFESSIONAL SERVICE CORPORATION'];
+
+export async function resolveNyCorpCeo(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult | null> {
+  const w = sodaLike(['current_entity_name'], queryTokens(input.company_name));
+  if (!w) return null;
+  const types = NY_CORP_TYPES.map((t) => `'${t}'`).join(',');
+  const url = `${NY_CORP_URL}?$where=${encodeURIComponent(`(${w}) AND chairman_name IS NOT NULL AND entity_type in (${types})`)}&$limit=200`;
+  const rows = await soda(ctx, url);
+  const pick = pickCandidate(rows, input, (r) => r.current_entity_name || '', (r) => r.location_city || r.chairman_city || r.dos_process_city);
+  if (!pick) return null;
+  if (zipConflict(input, pick.row.location_zip || pick.row.dos_process_zip, pick.method, pick.cityMatch)) return null;
+  const name = lastFirstToFirstLast(pick.row.chairman_name);
+  if (!isPerson(name, input.city)) return null;
+  return made(input, [{ name, title: 'CEO', role: 'officer', labeled: true }], url, pick.method, pick.cityMatch, 'ny_corp_ceo', {
+    business_name: pick.row.current_entity_name,
+    entity_id: pick.row.dos_id || null,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CMS ownership (All Owners + Enrollments): HHA, hospice, SNF, RHC, hospital
+// ---------------------------------------------------------------------------
+/** Which CMS provider files a company name could be in. An NPI searches all of them. */
+const CMS_GATES: Record<CmsType, RegExp> = {
+  hha: /home\s*health|home\s*care|homecare|in[-\s]?home|visiting\s+nurse|\bvna\b|private\s+duty|nursing\s+services|health\s*care\s+services/i,
+  hospice: /hospice|palliative/i,
+  snf: /nursing|rehab|skilled|care\s+center|health\s*care\s+center|convalescent|post[-\s]?acute|living\s+center|care\s+home|manor\b/i,
+  rhc: /clinic|rural\s+health|family\s+(medicine|practice|health)/i,
+  hospital: /hospital|medical\s+center|regional\s+health/i,
+};
+
+export function cmsTypesFor(input: NameLookupInput): CmsType[] {
+  if (input.npi) return [...CMS_TYPES];
+  const name = String(input.company_name || '');
+  return CMS_TYPES.filter((t) => CMS_GATES[t].test(name));
+}
+
+/** ZIP from input.zip, else the last 5-digit group in the address. */
+export function inputZip5(input: NameLookupInput): string | null {
+  return zip5Of(input.zip) || zip5Of(String(input.address || '').match(/\b(\d{5})(?:-\d{4})?\s*$/)?.[1]);
+}
+
+/** Different ZIPs: only an exact name in the same city survives. */
+function zipConflict(input: NameLookupInput, rowZip: string | null | undefined, method: 'exact' | 'substring', cityMatch: boolean): boolean {
+  const a = inputZip5(input);
+  const b = zip5Of(rowZip);
+  if (!a || !b || a === b) return false;
+  return !(method === 'exact' && cityMatch);
+}
+
+export async function resolveCmsOwners(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult | null> {
+  const types = cmsTypesFor(input);
+  if (!types.length) return null;
+  const st = normalizeState(input.state);
+  const fetchImpl = ctxFetch(ctx);
+  const ids = await cmsDatasetIds(fetchImpl);
+  const npi = String(input.npi || '').replace(/\D/g, '');
+  const longest = [...queryTokens(input.company_name, 4)].sort((a, b) => b.length - a.length)[0];
+  for (const type of types) {
+    const ds = ids[type];
+    let rows: Array<Record<string, string>> = [];
+    if (npi.length === 10) rows = await soda(ctx, cmsQueryUrl(ds.enrollments, [{ path: 'NPI', value: npi }], 20));
+    let pick: { row: Record<string, string>; method: 'exact' | 'substring'; cityMatch: boolean } | null = rows.length
+      ? { row: rows[0], method: 'exact', cityMatch: true }
+      : null;
+    if (!pick && longest && st) {
+      for (const col of ['DOING BUSINESS AS NAME', 'ORGANIZATION NAME']) {
+        rows = await soda(ctx, cmsQueryUrl(ds.enrollments, [{ path: col, value: longest, op: 'CONTAINS' }, { path: 'STATE', value: st }], 200));
+        pick = pickCandidate(rows, input, (r) => r[col] || '', (r) => r.CITY);
+        if (pick && zipConflict(input, pick.row['ZIP CODE'], pick.method, pick.cityMatch)) pick = null;
+        if (pick) break;
+      }
+    }
+    if (!pick) continue;
+    const enrollmentId = pick.row['ENROLLMENT ID'];
+    if (!enrollmentId) continue;
+    const ownersUrl = cmsQueryUrl(ds.owners, [{ path: 'ENROLLMENT ID', value: enrollmentId }], 200);
+    const summary = summarizeCmsOwners(await soda(ctx, ownersUrl));
+    const people = summary.people
+      .filter((p) => p.ok)
+      .slice(0, 4)
+      .flatMap((p) =>
+        hitsFromRoster(
+          input,
+          [{ name: `${p.first} ${p.last}`, title: p.title, role: p.role_rank <= 2 ? 'owner' : 'officer', labeled: true }],
+          'open_data',
+          ownersUrl,
+          pick!.method,
+          { cityMatch: pick!.cityMatch },
+        ),
+      );
+    // Owned only by organizations (a chain or a PE platform): no person here. Universe mode keeps those flags.
+    if (!people.length) continue;
+    const flags = { private_equity: summary.pe_flag, reit: summary.reit_flag, org_owners: summary.org_owners };
+    return {
+      people,
+      coverage_reason: null,
+      source: 'open_data',
+      source_url: ownersUrl,
+      match_method: pick.method,
+      implemented: true,
+      open_data_source: 'cms_owners',
+      business_name: pick.row['ORGANIZATION NAME'] || null,
+      dba_name: pick.row['DOING BUSINESS AS NAME'] || null,
+      entity_id: enrollmentId,
+      ownership_flags: flags,
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Form 5500 plan signer (universe table, loaded from the DOL bulk files)
+// ---------------------------------------------------------------------------
+export async function resolveForm5500(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult | null> {
+  const store = ctx?.universeStore === undefined ? UniverseStore.fromEnv() : ctx.universeStore;
+  if (!store) return null;
+  const ein = String(input.ein || '').replace(/\D/g, '');
+  const zip = inputZip5(input);
+  const phone = phoneDigits(input.phone);
+  const nameKey = ilNormName(String(input.company_name).split(/\s[-–|:]\s|\s\(|\|/)[0]) || ilNormName(input.company_name);
+  if (ein.length !== 9 && !(nameKey && zip) && !phone) return null;
+  let rows: Array<Record<string, unknown>> = [];
+  try {
+    rows = (await store.lookup('form5500', { ein: ein.length === 9 ? ein : null, name_key: zip ? nameKey : null, zip5: zip, phone })) as unknown as Array<Record<string, unknown>>;
+  } catch {
+    return null;
+  }
+  const named = rows.filter((r) => r.waterfall_ready && r.owner_first && r.owner_last);
+  const byEin = ein.length === 9 ? named.find((r) => r.ein === ein) : undefined;
+  const byName = zip ? named.filter((r) => (r.name_key === nameKey || r.dba_key === nameKey) && r.zip5 === zip) : [];
+  // A phone alone must also agree on the name (loosely): shared office lines are common.
+  const byPhone = phone ? named.filter((r) => r.phone === phone && looseNameMatch(String(r.legal_name || ''), input.company_name)) : [];
+  const hit = byEin || (byName.length === 1 ? byName[0] : undefined) || (byPhone.length === 1 ? byPhone[0] : undefined);
+  if (!hit) return null;
+  const people = hitsFromRoster(
+    input,
+    [{ name: `${hit.owner_first} ${hit.owner_last}`, title: F5500_TITLE, role: 'officer', labeled: true }],
+    'open_data',
+    'https://www.askebsa.dol.gov/epds/',
+    'exact',
+    { cityMatch: true },
+  ).map((p) => ({ ...p, confidence: 'medium' as const, confidence_score: Math.min(p.confidence_score ?? 0.7, 0.7) }));
+  if (!people.length) return null;
+  return {
+    people,
+    coverage_reason: null,
+    source: 'open_data',
+    source_url: 'https://www.askebsa.dol.gov/epds/',
+    match_method: 'exact',
+    implemented: true,
+    open_data_source: 'form5500',
+    business_name: String(hit.legal_name || '') || null,
+    legal_name: String(hit.legal_name || '') || null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
 const STATE_SOURCES: Record<string, OpenDataSourceId[]> = {
-  PA: ['pa_dos'],
+  CA: ['ca_la_fbn', 'ca_sf_reg', 'ca_abc'],
+  AK: ['ak_bl'],
+  PA: ['pa_dos', 'phl_bl'],
   CO: ['co_trade'],
   OR: ['or_ccb'],
-  NY: ['nyc_dob', 'ny_dmv'],
+  NY: ['nyc_dob', 'ny_dmv', 'ny_corp_ceo'],
   WA: ['wa_lni'],
   MO: ['mo_liquor'],
   IL: ['chicago', 'il_idfpr'],
-  TX: ['tx_tabc'],
+  TX: ['tx_tdlr', 'tx_tabc'],
   DC: ['dc_bbl'],
 };
 
 /** National overlays run for every state, phone-keyed first. */
-const NATIONAL_SOURCES: OpenDataSourceId[] = ['fmcsa', 'nppes'];
+const NATIONAL_SOURCES: OpenDataSourceId[] = ['fmcsa', 'cms_owners', 'nppes'];
+/** National sources tried after the state's own files: a plan signer is less certain than an officer roll. */
+const NATIONAL_TAIL: OpenDataSourceId[] = ['form5500'];
+
+/** The state's own files only (no national overlays). */
+export function stateOpenDataSources(state: string): OpenDataSourceId[] {
+  return [...(STATE_SOURCES[normalizeState(state)] || [])];
+}
+
+/** State -> free owner files queried for it (national overlays excluded). Reported by the health tool. */
+export function openDataStateSources(): Record<string, OpenDataSourceId[]> {
+  return Object.fromEntries(Object.entries(STATE_SOURCES).map(([k, v]) => [k, [...v]]));
+}
 
 export function openDataSourcesFor(state: string): OpenDataSourceId[] {
   const st = normalizeState(state);
-  return [...NATIONAL_SOURCES, ...(STATE_SOURCES[st] || [])];
+  return [...NATIONAL_SOURCES, ...(STATE_SOURCES[st] || []), ...NATIONAL_TAIL];
 }
 
 export function openDataEnabled(ctx?: LookupContext): boolean {
@@ -651,6 +1146,24 @@ async function runSource(id: OpenDataSourceId, input: NameLookupInput, ctx?: Loo
       return { result: await resolveFmcsa(input, ctx), legal_name: null };
     case 'nppes':
       return { result: await resolveNppes(input, ctx), legal_name: null };
+    case 'ca_la_fbn':
+      return resolveCaLaFbn(input, ctx);
+    case 'ca_sf_reg':
+      return resolveCaSfRegistry(input, ctx);
+    case 'ca_abc':
+      return resolveCaAbc(input, ctx);
+    case 'tx_tdlr':
+      return { result: await resolveTxTdlr(input, ctx), legal_name: null };
+    case 'ak_bl':
+      return resolveAkBusinessLicense(input, ctx);
+    case 'phl_bl':
+      return resolvePhiladelphia(input, ctx);
+    case 'cms_owners':
+      return { result: await resolveCmsOwners(input, ctx), legal_name: null };
+    case 'form5500':
+      return { result: await resolveForm5500(input, ctx), legal_name: null };
+    case 'ny_corp_ceo':
+      return { result: await resolveNyCorpCeo(input, ctx), legal_name: null };
     default:
       return { result: null, legal_name: null };
   }
