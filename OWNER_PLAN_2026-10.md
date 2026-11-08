@@ -6,7 +6,7 @@ This document supersedes `STATE_PLAYBOOK.md` wherever the two disagree. Nothing 
 
 Measured baseline (381 rows, Oct 21): **51% named**. Most hits came from LinkedIn and web search, not registries. Only 11 states were at or above 70%.
 
-> **Nov 8 2026 update.** Two national sources were added after this plan: CMS provider ownership (HHA, hospice, SNF, RHC, hospital) and the DOL Form 5500 plan signer, which names an employer-side person for about 320K employers with 15 to 499 participants in every state, including the agent-only states. NC is no longer fetched (terms). Evidence: `research/2026-11-08/universe-sources.md`.
+> **Nov 8 2026 update.** Two national sources were added after this plan: CMS provider ownership (HHA, hospice, SNF, RHC, hospital) and the DOL Form 5500 plan signer, which names an employer-side person for about 320K employers with 15 to 499 participants in every state, including the agent-only states. Evidence: `research/2026-11-08/universe-sources.md`.
 
 ---
 

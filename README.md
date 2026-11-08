@@ -65,24 +65,23 @@ Turns a whole public file into company + owner rows, so the list does not depend
 ```bash
 npx tsx scripts/build_universe.ts --source cms_all              # dry run: counts only
 npx tsx scripts/build_universe.ts --source fmcsa --run          # active carriers with an officer, 5+ power units
-npx tsx scripts/build_universe.ts --source form5500 --run       # 2024 + 2025 plan years, 10 to 2,000 participants
+npx tsx scripts/build_universe.ts --source form5500 --run       # 2024 + 2025 plan years, 15+ participants
 ```
 
 | Source | Owner field | Size fields | Dry run Nov 8 2026 |
 |---|---|---|---|
-| `cms_hha`, `cms_hospice`, `cms_snf`, `cms_rhc`, `cms_hospital` | Top individual owner by role, then ownership % (CMS All Owners) | none | HHA 11,522 providers, 10,949 ready; hospice 5,690, 5,414 ready |
+| `cms_hha`, `cms_hospice`, `cms_snf`, `cms_rhc`, `cms_hospital` | Top individual owner by role, then ownership % (CMS All Owners) | none | 46,380 providers, 44,098 ready (HHA 10,949, hospice 5,414, SNF 13,524, RHC 5,444, hospital 8,767) |
 | `fmcsa` | Company officer 1/2 | power units, drivers | 248,488 nationally at 5+ power units |
-| `form5500` | Plan signer, employer side only | participants | 451,260 employers (2024 only), 327,188 ready |
+| `form5500` | Plan signer, employer side only | participants | 360,719 employers at 15+ participants (2024 only), 269,373 ready |
 
 Columns: source, source_record_id, legal_name, dba, address, city, state, zip, phone, ein, npi, ccn, usdot, owner_first, owner_last, owner_title, ownership_pct, pe_flag, reit_flag, org_owners, size_*, business_code, as_of, confidence, waterfall_ready, name_key, dba_key, zip5. Output is counts only. Migration: `supabase/migrations/20261108_universe.sql` (adds the `client_pe` schema to the table-jobs allowlists). Evidence: `research/2026-11-08/universe-sources.md`.
 
 ## Lookup order
 
-0. **Free public files** (`openDataSources.ts`, $0, no bot walls): national overlays first (FMCSA census by phone/name for anything with a USDOT number; CMS ownership for home health, hospice, nursing, rural clinics and hospitals, with ownership % and PE / REIT flags; NPPES authorized official for healthcare), then the state's files: PA officers (`xvd7-5r2c`) + Philadelphia license holders, CO trade names, OR CCB `rmi_name`, NY DMV owner_name + NYC DOB, WA L&I principal, MO liquor OWN/PART/MGR, Chicago license owners, IL IDFPR, TX TDLR `owner_name` + TX TABC (passes the LLC name on when the licensee is an entity), CA LA County fictitious business names (`RegisteredOwnerName`) + SF registered businesses (`ownership_name`) + CA ABC daily export (sole-prop licensee; downloaded once a day and cached in memory), AK business-license `Owners`, DC Basic Business License owner. Last, the Form 5500 plan signer from the universe table (EIN, then name + ZIP, then phone; confidence medium). FL Sunbiz + IL DTA bulk (incl. corp president/secretary) run in the official step. Off with `OPEN_DATA_ENABLED=false`.
+0. **Free public files** (`openDataSources.ts`, $0, no bot walls): national overlays first (FMCSA census by phone/name for anything with a USDOT number; CMS ownership for home health, hospice, nursing, rural clinics and hospitals, with ownership % and PE / REIT flags; NPPES authorized official for healthcare), then the state's files: PA officers (`xvd7-5r2c`) + Philadelphia license holders, CO trade names, OR CCB `rmi_name`, NY DMV owner_name + NYC DOB, WA L&I principal, MO liquor OWN/PART/MGR, Chicago license owners, IL IDFPR, NY business corporation CEO (`n9v6-gdp6` chairman_name, corporations only), TX TDLR `owner_name` + TX TABC (passes the LLC name on when the licensee is an entity), CA LA County fictitious business names (`RegisteredOwnerName`) + SF registered businesses (`ownership_name`) + CA ABC daily export (sole-prop licensee; downloaded once a day and cached in memory), AK business-license `Owners`, DC Basic Business License owner. Last, the Form 5500 plan signer from the universe table (EIN, then name + ZIP, then phone; confidence medium). FL Sunbiz + IL DTA bulk (incl. corp president/secretary) run in the official step. Off with `OPEN_DATA_ENABLED=false`.
 1. **DBA → legal name** (Serper-first): site footer / privacy / terms / copyright, then `"<name>" <city> LLC OR Inc`, then Google Maps/GBP, then free county fictitious-business-name snippets.
 2. **Serper owner** for every state. High confidence (≥0.8) can skip SOS.
-3. **Official registry** after a Serper miss. Open from a datacenter: TX Comptroller JSON, KY, WV, MN, AL, AR, NE, ID, NM, ND, RI, SD, VT, DE, DC. Bot-walled (GA UT MO MS MT HI AK NH MA NV WA WY MI AZ IA KS IN TN VA OR SC): routed through the **unblocker** (`unblocker.ts`, Zyte / Bright Data / ScrapingBee / ScraperAPI via `UNBLOCKER_*` env, charged to `TOTAL_MAX_USD`) before Apify. CA hybrid stays on Apify.
-   **NC is never fetched** by any route: its terms say automated or scripted searches are not permitted (`SCRIPTED_SEARCH_PROHIBITED` in `catalog.ts`, coverage reason `terms_prohibited`). NC rows still get open data, Serper and the web cascade. The compliant registry route is the NC SOS data subscription ($750 setup plus $2,000 per state fiscal year), pending Josh's OK.
+3. **Official registry** after a Serper miss. Open from a datacenter: TX Comptroller JSON, KY, WV, MN, AL, AR, NE, ID, NM, ND, RI, SD, VT, DE, DC. Bot-walled (GA NC UT MO MS MT HI AK NH MA NV WA WY MI AZ IA KS IN TN VA OR SC): routed through the **unblocker** (`unblocker.ts`, Zyte / Bright Data / ScrapingBee / ScraperAPI via `UNBLOCKER_*` env, charged to `TOTAL_MAX_USD`) before Apify. CA hybrid stays on Apify.
 4. **Agent-only fallback:** About page → Serper LinkedIn → find-named-person. Registered agents count only when the agent is a person at the business address or the surname is in the company name.
 5. **Hard-to-find** and **LLC unmask by address** as before.
 
@@ -91,6 +90,9 @@ Columns: source, source_record_id, legal_name, dba, address, city, state, zip, p
 See [`BULK_OWNER_SOURCES.md`](BULK_OWNER_SOURCES.md) for every state with a free bulk or open owner file, what is wired, and what is left (and why).
 
 ## Skip (structurally agent-only)
+
+NY corporations are an exception: the free NY file names the CEO from the biennial statement (469,721 corporations, up to two years stale). NY LLCs stay agent-only.
+
 
 `CO OH NY WI MD NJ SC KS DE ME` — no officer data exists in the state. Trade-name files, license rosters, FMCSA/NPPES and the web cascade still run for these.
 

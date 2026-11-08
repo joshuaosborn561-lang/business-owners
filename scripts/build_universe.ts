@@ -6,7 +6,7 @@
  *   npx tsx scripts/build_universe.ts --source cms_hha [--state TX] [--run]
  *   npx tsx scripts/build_universe.ts --source cms_all --run
  *   npx tsx scripts/build_universe.ts --source fmcsa [--min-power-units 5] [--state OH] [--run]
- *   npx tsx scripts/build_universe.ts --source form5500 [--years 2024,2025] [--min-participants 10] [--max-participants 2000] [--run]
+ *   npx tsx scripts/build_universe.ts --source form5500 [--years 2024,2025] [--min-participants 15] [--max-participants N] [--run]
  *
  * Env for --run: TABLE_JOBS_SUPABASE_URL, TABLE_JOBS_SUPABASE_KEY, TABLE_JOBS_TOKEN (same as table jobs).
  * Form 5500 zips are cached in --cache-dir (default /tmp/form5500), about 170 MB per year.
@@ -95,9 +95,9 @@ async function download(url: string, path: string): Promise<void> {
 
 async function form5500Rows(): Promise<Iterable<UniverseRow>> {
   const years = (arg('years') || '2024,2025').split(',').map((y) => Number(y.trim())).filter((y) => y >= 2009 && y <= 2100);
-  const minP = Number(arg('min-participants') ?? 10);
+  const minP = Number(arg('min-participants') ?? 15);
   const maxRaw = arg('max-participants');
-  const maxP = maxRaw === null ? 2000 : maxRaw === 'none' ? null : Number(maxRaw);
+  const maxP = maxRaw === null || maxRaw === 'none' ? null : Number(maxRaw);
   mkdirSync(cacheDir, { recursive: true });
   const acc = new F5500Accumulator();
   let filings = 0;

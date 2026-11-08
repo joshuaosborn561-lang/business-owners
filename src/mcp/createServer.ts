@@ -1,6 +1,5 @@
 import { unblockerConfigFromEnv } from '../server/lib/stateOwners/sos/unblocker.js';
 import { openDataStateSources } from '../server/lib/stateOwners/sos/openDataSources.js';
-import { SCRIPTED_SEARCH_PROHIBITED } from '../server/lib/stateOwners/sos/catalog.js';
 import { universeTableFromEnv } from '../server/lib/universe/store.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -55,8 +54,8 @@ export function healthPayload() {
     unblocker_provider: unblockerConfigFromEnv()?.provider ?? null,
     open_data_enabled: process.env.OPEN_DATA_ENABLED !== 'false',
     open_data_state_sources: openDataStateSources(),
+    open_data_national_sources: ['fmcsa', 'cms_owners', 'nppes', 'form5500'],
     bulk_registry_states: ['FL', 'IL'],
-    scripted_search_prohibited_states: Object.keys(SCRIPTED_SEARCH_PROHIBITED),
     universe_table: universeTableFromEnv(),
     writes_enabled: config.writesEnabled,
     officer_publishing_states: [...OFFICER_PUBLISHING_CODES],
@@ -137,7 +136,7 @@ export function createBusinessOwnersMcpServer(): McpServer {
       title: 'Lookup US business owners by company + city + state',
       description: `WHEN TO USE: Need an owner/officer name with no permit or license number. Input is company name + city + state (optional domain).
 WHAT IT DOES: DBA→legal name (website footer/privacy/terms/copyright, Serper LLC/Inc query, Maps/GBP, free county FBN) → Serper owner → official SOS (CA hybrid dz_omar + web-fetch SI PDFs) → agent fallback (About page, LinkedIn Serper, find-named-person). Prefer Serper over Apify. APIFY_MAX_USD is a hard cap. Never paid datasets. estimate_only quotes credits/$. ca_batch defaults to hybrid-only. RETURNS: owners[] (first_name, last_name, title, company, domain, source, confidence) plus counts, cost and per-state hit rates. Every result is saved to business_owners.owner_hits; get_owner_results pages the rest or returns CSV.
-ORDER: free open data first (PA officers, FMCSA by phone, CMS ownership for home health / hospice / nursing, NPPES, CA county FBN / SF registry / ABC, TX TDLR + TABC, AK licenses, state license / liquor / trade-name files, FL + IL bulk) → Serper → official registry (unblocker lane for bot-walled states when UNBLOCKER_API_KEY is set) → About/LinkedIn → unmask. Pass phone from the Maps row: it is the strongest join key.\nQUOTE FIRST: call with estimate_only=true, show quote.total_usd_max to the user, and run only after they approve.\nSKIP STATES: CO OH NY WI MD NJ SC KS DE ME (no officer data exists; trade names, license files and web still run).
+ORDER: free open data first (PA officers, FMCSA by phone, CMS ownership for home health / hospice / nursing, NPPES, NY corp CEO, CA county FBN / SF registry / ABC, TX TDLR + TABC, AK licenses, state license / liquor / trade-name files, FL + IL bulk) → Serper → official registry (unblocker lane for bot-walled states when UNBLOCKER_API_KEY is set) → About/LinkedIn → unmask. Pass phone from the Maps row: it is the strongest join key.\nQUOTE FIRST: call with estimate_only=true, show quote.total_usd_max to the user, and run only after they approve.\nSKIP STATES: CO OH NY WI MD NJ SC KS DE ME (no officer data exists; trade names, license files and web still run).
 NEXT: get_business_owner_job(job_id). Local CSV: npx tsx scripts/owner_lookup_sample.ts --in companies.csv --out results.csv.`,
       inputSchema: {
         source_table: z.string().optional().describe('Not used here. To run on a Supabase table without pasting rows, use start_table_job.'),

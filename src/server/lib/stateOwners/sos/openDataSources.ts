@@ -22,6 +22,7 @@
  *  ak_bl       AK DCCED ArcGIS layer 2     statewide business licenses, Owners
  *  phl_bl      phl.carto.com business_licenses  Philadelphia licenses, legal first/last for individuals
  *  cms_owners  data.cms.gov All Owners + Enrollments  HHA / hospice / SNF / RHC / hospital owners with ownership %, PE + REIT flags
+ *  ny_corp_ceo data.ny.gov n9v6-gdp6        NY business corporations, CEO from the biennial statement (chairman_name); LLCs have none
  *  form5500    client_pe.bo_universe (DOL Form 5500 bulk, loaded by scripts/build_universe.ts)  plan signer by EIN / name+ZIP / phone
  *
  * CA added 2026-11-05: CA SOS sells/publishes no bulk entity file, so the free
@@ -65,7 +66,8 @@ export type OpenDataSourceId =
   | 'ak_bl'
   | 'phl_bl'
   | 'cms_owners'
-  | 'form5500';
+  | 'form5500'
+  | 'ny_corp_ceo';
 
 export interface OpenDataOutcome {
   result: NameLookupResult | null;
@@ -913,6 +915,30 @@ export async function resolvePhiladelphia(input: NameLookupInput, ctx?: LookupCo
 }
 
 // ---------------------------------------------------------------------------
+// New York business corporations: n9v6-gdp6 chairman_name (the CEO named on the biennial statement)
+// ---------------------------------------------------------------------------
+export const NY_CORP_URL = 'https://data.ny.gov/resource/n9v6-gdp6.json';
+/** CEO names exist only for corporations. LLCs file no names, so they stay agent-only. Verified 2026-11-08: 469,721 corps. */
+const NY_CORP_TYPES = ['DOMESTIC BUSINESS CORPORATION', 'FOREIGN BUSINESS CORPORATION', 'DOMESTIC PROFESSIONAL SERVICE CORPORATION'];
+
+export async function resolveNyCorpCeo(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult | null> {
+  const w = sodaLike(['current_entity_name'], queryTokens(input.company_name));
+  if (!w) return null;
+  const types = NY_CORP_TYPES.map((t) => `'${t}'`).join(',');
+  const url = `${NY_CORP_URL}?$where=${encodeURIComponent(`(${w}) AND chairman_name IS NOT NULL AND entity_type in (${types})`)}&$limit=200`;
+  const rows = await soda(ctx, url);
+  const pick = pickCandidate(rows, input, (r) => r.current_entity_name || '', (r) => r.location_city || r.chairman_city || r.dos_process_city);
+  if (!pick) return null;
+  if (zipConflict(input, pick.row.location_zip || pick.row.dos_process_zip, pick.method, pick.cityMatch)) return null;
+  const name = lastFirstToFirstLast(pick.row.chairman_name);
+  if (!isPerson(name, input.city)) return null;
+  return made(input, [{ name, title: 'CEO', role: 'officer', labeled: true }], url, pick.method, pick.cityMatch, 'ny_corp_ceo', {
+    business_name: pick.row.current_entity_name,
+    entity_id: pick.row.dos_id || null,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // CMS ownership (All Owners + Enrollments): HHA, hospice, SNF, RHC, hospital
 // ---------------------------------------------------------------------------
 /** Which CMS provider files a company name could be in. An NPI searches all of them. */
@@ -1059,7 +1085,7 @@ const STATE_SOURCES: Record<string, OpenDataSourceId[]> = {
   PA: ['pa_dos', 'phl_bl'],
   CO: ['co_trade'],
   OR: ['or_ccb'],
-  NY: ['nyc_dob', 'ny_dmv'],
+  NY: ['nyc_dob', 'ny_dmv', 'ny_corp_ceo'],
   WA: ['wa_lni'],
   MO: ['mo_liquor'],
   IL: ['chicago', 'il_idfpr'],
@@ -1136,6 +1162,8 @@ async function runSource(id: OpenDataSourceId, input: NameLookupInput, ctx?: Loo
       return { result: await resolveCmsOwners(input, ctx), legal_name: null };
     case 'form5500':
       return { result: await resolveForm5500(input, ctx), legal_name: null };
+    case 'ny_corp_ceo':
+      return { result: await resolveNyCorpCeo(input, ctx), legal_name: null };
     default:
       return { result: null, legal_name: null };
   }

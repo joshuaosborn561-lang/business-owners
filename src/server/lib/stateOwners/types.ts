@@ -22,8 +22,6 @@ export const COVERAGE_REASONS = [
   'agent_only',
   'missing_key',
   'not_implemented',
-  /** The registry's terms forbid automated or scripted searches (NC). */
-  'terms_prohibited',
 ] as const;
 
 export type CoverageReason = (typeof COVERAGE_REASONS)[number];

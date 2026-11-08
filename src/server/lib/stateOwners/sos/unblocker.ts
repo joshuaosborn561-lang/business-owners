@@ -38,11 +38,10 @@ export interface UnblockerPage {
 /**
  * Registries that publish officers/principals but block datacenter traffic
  * (observed 2026-10-25). PA uses open data, CA the Apify hybrid, FL the bulk
- * file and OH is agent-only, so they are not routed here. NC is excluded because
- * its terms forbid scripted searches (catalog SCRIPTED_SEARCH_PROHIBITED).
+ * file and OH is agent-only, so they are not routed here.
  */
 export const UNBLOCKER_STATES = new Set([
-  'GA', 'UT', 'MO', 'MS', 'MT', 'HI', 'AK', 'NH', 'MA', 'NV', 'WA', 'WY', 'MI', 'AZ', 'IA', 'KS', 'IN', 'TN', 'VA', 'OR', 'SC',
+  'GA', 'NC', 'UT', 'MO', 'MS', 'MT', 'HI', 'AK', 'NH', 'MA', 'NV', 'WA', 'WY', 'MI', 'AZ', 'IA', 'KS', 'IN', 'TN', 'VA', 'OR', 'SC',
 ]);
 
 export function usesUnblocker(state: string): boolean {

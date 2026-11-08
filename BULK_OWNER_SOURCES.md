@@ -25,6 +25,7 @@ Paid bulk products (MN, RI, AZ, OK, ND, NC, MT, HI, UT, WY, KY, ...) are in `OWN
 | CO | Trade names `u7sb-g482`; entities `4ykn-tg5h` | Trade-name registrant; person registered agent (promotion rule) | `co_trade`, `sodaStates.ts` | Oct 2026 |
 | OR | CCB `g77e-6bhs`; Active Businesses `tckn-sxa6` | Contractor responsible individual; assumed-business-name owner | `or_ccb`, `sodaStates.ts` | Oct 2026 |
 | NY | DMV facilities `nhjr-rpi2`; NYC DOB `t8hj-ruu2`; Active Corporations `n9v6-gdp6` | Auto-trade owners; NYC contractor licensees; DOS process name (promotion rule) | `ny_dmv`, `nyc_dob`, `sodaStates.ts` | Oct 2026 |
+| **NY** | Active Corporations `n9v6-gdp6` `chairman_name` | CEO from the biennial statement, business corporations only (469,721) | `ny_corp_ceo` | Nov 8 2026 |
 | WA | L&I contractors `m8qx-ubtq` | Primary principal | `wa_lni` | Oct 2026 |
 | MO | Alcohol licenses `yyhn-562y` | Owner / partner / managing officer | `mo_liquor` | Oct 2026 |
 | DC | Basic Business License (DCGIS FEEDS/DCRA) | Business owner first/last | `dc_bbl` | Oct 2026 |
@@ -34,8 +35,6 @@ Paid bulk products (MN, RI, AZ, OK, ND, NC, MT, HI, UT, WY, KY, ...) are in `OWN
 | **All** | DOL Form 5500 / 5500-SF bulk, yearly | Employer-side plan signer by EIN, with participant count, phone and NAICS. Loaded into `client_pe.bo_universe`, then read by the overlay | `form5500` overlay and universe source | Nov 8 2026 |
 
 `health` returns `open_data_state_sources`, the live state-to-adapter map.
-
-NC: the registry is never fetched (its terms forbid scripted searches). The paid NC data subscription is the compliant route.
 
 ## Free, but not wired (and why)
 

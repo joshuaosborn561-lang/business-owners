@@ -61,7 +61,7 @@ describe('open data helpers', () => {
 
   it('runs national overlays for every state and state files where they exist', () => {
     assert.deepEqual(openDataSourcesFor('PA'), ['fmcsa', 'cms_owners', 'nppes', 'pa_dos', 'phl_bl', 'form5500']);
-    assert.deepEqual(openDataSourcesFor('ny'), ['fmcsa', 'cms_owners', 'nppes', 'nyc_dob', 'ny_dmv', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('ny'), ['fmcsa', 'cms_owners', 'nppes', 'nyc_dob', 'ny_dmv', 'ny_corp_ceo', 'form5500']);
     assert.deepEqual(openDataSourcesFor('OH'), ['fmcsa', 'cms_owners', 'nppes', 'form5500']);
     assert.deepEqual(openDataSourcesFor('CA'), ['fmcsa', 'cms_owners', 'nppes', 'ca_la_fbn', 'ca_sf_reg', 'ca_abc', 'form5500']);
     assert.deepEqual(openDataSourcesFor('TX'), ['fmcsa', 'cms_owners', 'nppes', 'tx_tdlr', 'tx_tabc', 'form5500']);
@@ -305,5 +305,26 @@ describe('TDLR, Alaska, Philadelphia', () => {
     assert.equal(r.result?.people[0].last_name?.toUpperCase(), 'ROSS');
     const pgh = await resolvePhiladelphia({ company_name: 'Roger Ross Plumbing & Heating', city: 'Pittsburgh', state: 'PA' }, ctx);
     assert.equal(pgh.result, null);
+  });
+});
+
+describe('NY business corporation CEO', () => {
+  it('names the biennial-statement CEO, flips LAST, FIRST, and refuses a corporate CEO', async () => {
+    const { resolveNyCorpCeo } = await import('./openDataSources.js');
+    const rows = [
+      { dos_id: '1', current_entity_name: 'EMPIREWIDGETS INC.', entity_type: 'DOMESTIC BUSINESS CORPORATION', chairman_name: 'EXAMPLE, CASEY', location_city: 'ALBANY', location_zip: '12207' },
+      { dos_id: '2', current_entity_name: 'HOLDCO SERVICES INC.', entity_type: 'DOMESTIC BUSINESS CORPORATION', chairman_name: 'PARENT HOLDINGS LLC', location_city: 'BUFFALO' },
+    ];
+    const ctx: LookupContext = { live: false, fetch: fakeFetch([[/n9v6-gdp6/, rows]]) };
+    const r = await resolveNyCorpCeo({ company_name: 'Empire Widgets', city: 'Albany', state: 'NY' }, ctx);
+    assert.equal(r?.people[0].first_name?.toUpperCase(), 'CASEY');
+    assert.equal(r?.people[0].last_name?.toUpperCase(), 'EXAMPLE');
+    assert.equal(r?.people[0].title, 'CEO');
+    assert.equal(r?.open_data_source, 'ny_corp_ceo');
+    assert.ok(isWaterfallReady(r!.people[0]));
+    const corp = await resolveNyCorpCeo({ company_name: 'Holdco Services', city: 'Buffalo', state: 'NY' }, ctx);
+    assert.equal(corp, null);
+    const farZip = await resolveNyCorpCeo({ company_name: 'Empire Widgets Co', city: 'Troy', state: 'NY', zip: '12180' }, ctx);
+    assert.equal(farZip, null);
   });
 });
