@@ -60,12 +60,12 @@ describe('open data helpers', () => {
   });
 
   it('runs national overlays for every state and state files where they exist', () => {
-    assert.deepEqual(openDataSourcesFor('PA'), ['fmcsa', 'nppes', 'pa_dos', 'phl_bl']);
-    assert.deepEqual(openDataSourcesFor('ny'), ['fmcsa', 'nppes', 'nyc_dob', 'ny_dmv']);
-    assert.deepEqual(openDataSourcesFor('OH'), ['fmcsa', 'nppes']);
-    assert.deepEqual(openDataSourcesFor('CA'), ['fmcsa', 'nppes', 'ca_la_fbn', 'ca_sf_reg', 'ca_abc']);
-    assert.deepEqual(openDataSourcesFor('TX'), ['fmcsa', 'nppes', 'tx_tdlr', 'tx_tabc']);
-    assert.deepEqual(openDataSourcesFor('AK'), ['fmcsa', 'nppes', 'ak_bl']);
+    assert.deepEqual(openDataSourcesFor('PA'), ['fmcsa', 'cms_owners', 'nppes', 'pa_dos', 'phl_bl', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('ny'), ['fmcsa', 'cms_owners', 'nppes', 'nyc_dob', 'ny_dmv', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('OH'), ['fmcsa', 'cms_owners', 'nppes', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('CA'), ['fmcsa', 'cms_owners', 'nppes', 'ca_la_fbn', 'ca_sf_reg', 'ca_abc', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('TX'), ['fmcsa', 'cms_owners', 'nppes', 'tx_tdlr', 'tx_tabc', 'form5500']);
+    assert.deepEqual(openDataSourcesFor('AK'), ['fmcsa', 'cms_owners', 'nppes', 'ak_bl', 'form5500']);
   });
 });
 

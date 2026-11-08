@@ -21,6 +21,8 @@
  *  tx_tdlr     data.texas.gov 7358-krk7    TDLR licenses, owner_name per business (A/C, electricians, etc.)
  *  ak_bl       AK DCCED ArcGIS layer 2     statewide business licenses, Owners
  *  phl_bl      phl.carto.com business_licenses  Philadelphia licenses, legal first/last for individuals
+ *  cms_owners  data.cms.gov All Owners + Enrollments  HHA / hospice / SNF / RHC / hospital owners with ownership %, PE + REIT flags
+ *  form5500    client_pe.bo_universe (DOL Form 5500 bulk, loaded by scripts/build_universe.ts)  plan signer by EIN / name+ZIP / phone
  *
  * CA added 2026-11-05: CA SOS sells/publishes no bulk entity file, so the free
  * owner files are county FBN (LA), SF registry and the ABC export. CSLB personnel
@@ -36,6 +38,10 @@ import { ctxFetch } from './context.js';
 import { ilNormName } from './ilLlc.js';
 import { hitsFromRoster, type RosterEntry } from './officers.js';
 import { firstZipEntry } from './zipEntry.js';
+import { CMS_TYPES, cmsDatasetIds, cmsQueryUrl, summarizeCmsOwners, type CmsType } from '../../universe/cms.js';
+import { F5500_TITLE } from '../../universe/form5500.js';
+import { UniverseStore } from '../../universe/store.js';
+import { zip5 as zip5Of } from '../../universe/types.js';
 import type { NameLookupInput, NameLookupResult } from './types.js';
 
 export type OpenDataSourceId =
@@ -57,7 +63,9 @@ export type OpenDataSourceId =
   | 'ca_abc'
   | 'tx_tdlr'
   | 'ak_bl'
-  | 'phl_bl';
+  | 'phl_bl'
+  | 'cms_owners'
+  | 'form5500';
 
 export interface OpenDataOutcome {
   result: NameLookupResult | null;
@@ -174,7 +182,7 @@ function made(
 }
 
 /** Prefer a city match; otherwise accept a lone exact-name candidate. */
-function pickCandidate<T>(
+export function pickCandidate<T>(
   rows: T[],
   input: NameLookupInput,
   nameOf: (r: T) => string,
@@ -905,6 +913,144 @@ export async function resolvePhiladelphia(input: NameLookupInput, ctx?: LookupCo
 }
 
 // ---------------------------------------------------------------------------
+// CMS ownership (All Owners + Enrollments): HHA, hospice, SNF, RHC, hospital
+// ---------------------------------------------------------------------------
+/** Which CMS provider files a company name could be in. An NPI searches all of them. */
+const CMS_GATES: Record<CmsType, RegExp> = {
+  hha: /home\s*health|home\s*care|homecare|in[-\s]?home|visiting\s+nurse|\bvna\b|private\s+duty|nursing\s+services|health\s*care\s+services/i,
+  hospice: /hospice|palliative/i,
+  snf: /nursing|rehab|skilled|care\s+center|health\s*care\s+center|convalescent|post[-\s]?acute|living\s+center|care\s+home|manor\b/i,
+  rhc: /clinic|rural\s+health|family\s+(medicine|practice|health)/i,
+  hospital: /hospital|medical\s+center|regional\s+health/i,
+};
+
+export function cmsTypesFor(input: NameLookupInput): CmsType[] {
+  if (input.npi) return [...CMS_TYPES];
+  const name = String(input.company_name || '');
+  return CMS_TYPES.filter((t) => CMS_GATES[t].test(name));
+}
+
+/** ZIP from input.zip, else the last 5-digit group in the address. */
+export function inputZip5(input: NameLookupInput): string | null {
+  return zip5Of(input.zip) || zip5Of(String(input.address || '').match(/\b(\d{5})(?:-\d{4})?\s*$/)?.[1]);
+}
+
+/** Different ZIPs: only an exact name in the same city survives. */
+function zipConflict(input: NameLookupInput, rowZip: string | null | undefined, method: 'exact' | 'substring', cityMatch: boolean): boolean {
+  const a = inputZip5(input);
+  const b = zip5Of(rowZip);
+  if (!a || !b || a === b) return false;
+  return !(method === 'exact' && cityMatch);
+}
+
+export async function resolveCmsOwners(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult | null> {
+  const types = cmsTypesFor(input);
+  if (!types.length) return null;
+  const st = normalizeState(input.state);
+  const fetchImpl = ctxFetch(ctx);
+  const ids = await cmsDatasetIds(fetchImpl);
+  const npi = String(input.npi || '').replace(/\D/g, '');
+  const longest = [...queryTokens(input.company_name, 4)].sort((a, b) => b.length - a.length)[0];
+  for (const type of types) {
+    const ds = ids[type];
+    let rows: Array<Record<string, string>> = [];
+    if (npi.length === 10) rows = await soda(ctx, cmsQueryUrl(ds.enrollments, [{ path: 'NPI', value: npi }], 20));
+    let pick: { row: Record<string, string>; method: 'exact' | 'substring'; cityMatch: boolean } | null = rows.length
+      ? { row: rows[0], method: 'exact', cityMatch: true }
+      : null;
+    if (!pick && longest && st) {
+      for (const col of ['DOING BUSINESS AS NAME', 'ORGANIZATION NAME']) {
+        rows = await soda(ctx, cmsQueryUrl(ds.enrollments, [{ path: col, value: longest, op: 'CONTAINS' }, { path: 'STATE', value: st }], 200));
+        pick = pickCandidate(rows, input, (r) => r[col] || '', (r) => r.CITY);
+        if (pick && zipConflict(input, pick.row['ZIP CODE'], pick.method, pick.cityMatch)) pick = null;
+        if (pick) break;
+      }
+    }
+    if (!pick) continue;
+    const enrollmentId = pick.row['ENROLLMENT ID'];
+    if (!enrollmentId) continue;
+    const ownersUrl = cmsQueryUrl(ds.owners, [{ path: 'ENROLLMENT ID', value: enrollmentId }], 200);
+    const summary = summarizeCmsOwners(await soda(ctx, ownersUrl));
+    const people = summary.people
+      .filter((p) => p.ok)
+      .slice(0, 4)
+      .flatMap((p) =>
+        hitsFromRoster(
+          input,
+          [{ name: `${p.first} ${p.last}`, title: p.title, role: p.role_rank <= 2 ? 'owner' : 'officer', labeled: true }],
+          'open_data',
+          ownersUrl,
+          pick!.method,
+          { cityMatch: pick!.cityMatch },
+        ),
+      );
+    // Owned only by organizations (a chain or a PE platform): no person here. Universe mode keeps those flags.
+    if (!people.length) continue;
+    const flags = { private_equity: summary.pe_flag, reit: summary.reit_flag, org_owners: summary.org_owners };
+    return {
+      people,
+      coverage_reason: null,
+      source: 'open_data',
+      source_url: ownersUrl,
+      match_method: pick.method,
+      implemented: true,
+      open_data_source: 'cms_owners',
+      business_name: pick.row['ORGANIZATION NAME'] || null,
+      dba_name: pick.row['DOING BUSINESS AS NAME'] || null,
+      entity_id: enrollmentId,
+      ownership_flags: flags,
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Form 5500 plan signer (universe table, loaded from the DOL bulk files)
+// ---------------------------------------------------------------------------
+export async function resolveForm5500(input: NameLookupInput, ctx?: LookupContext): Promise<NameLookupResult | null> {
+  const store = ctx?.universeStore === undefined ? UniverseStore.fromEnv() : ctx.universeStore;
+  if (!store) return null;
+  const ein = String(input.ein || '').replace(/\D/g, '');
+  const zip = inputZip5(input);
+  const phone = phoneDigits(input.phone);
+  const nameKey = ilNormName(String(input.company_name).split(/\s[-–|:]\s|\s\(|\|/)[0]) || ilNormName(input.company_name);
+  if (ein.length !== 9 && !(nameKey && zip) && !phone) return null;
+  let rows: Array<Record<string, unknown>> = [];
+  try {
+    rows = (await store.lookup('form5500', { ein: ein.length === 9 ? ein : null, name_key: zip ? nameKey : null, zip5: zip, phone })) as unknown as Array<Record<string, unknown>>;
+  } catch {
+    return null;
+  }
+  const named = rows.filter((r) => r.waterfall_ready && r.owner_first && r.owner_last);
+  const byEin = ein.length === 9 ? named.find((r) => r.ein === ein) : undefined;
+  const byName = zip ? named.filter((r) => (r.name_key === nameKey || r.dba_key === nameKey) && r.zip5 === zip) : [];
+  // A phone alone must also agree on the name (loosely): shared office lines are common.
+  const byPhone = phone ? named.filter((r) => r.phone === phone && looseNameMatch(String(r.legal_name || ''), input.company_name)) : [];
+  const hit = byEin || (byName.length === 1 ? byName[0] : undefined) || (byPhone.length === 1 ? byPhone[0] : undefined);
+  if (!hit) return null;
+  const people = hitsFromRoster(
+    input,
+    [{ name: `${hit.owner_first} ${hit.owner_last}`, title: F5500_TITLE, role: 'officer', labeled: true }],
+    'open_data',
+    'https://www.askebsa.dol.gov/epds/',
+    'exact',
+    { cityMatch: true },
+  ).map((p) => ({ ...p, confidence: 'medium' as const, confidence_score: Math.min(p.confidence_score ?? 0.7, 0.7) }));
+  if (!people.length) return null;
+  return {
+    people,
+    coverage_reason: null,
+    source: 'open_data',
+    source_url: 'https://www.askebsa.dol.gov/epds/',
+    match_method: 'exact',
+    implemented: true,
+    open_data_source: 'form5500',
+    business_name: String(hit.legal_name || '') || null,
+    legal_name: String(hit.legal_name || '') || null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
 const STATE_SOURCES: Record<string, OpenDataSourceId[]> = {
@@ -922,7 +1068,14 @@ const STATE_SOURCES: Record<string, OpenDataSourceId[]> = {
 };
 
 /** National overlays run for every state, phone-keyed first. */
-const NATIONAL_SOURCES: OpenDataSourceId[] = ['fmcsa', 'nppes'];
+const NATIONAL_SOURCES: OpenDataSourceId[] = ['fmcsa', 'cms_owners', 'nppes'];
+/** National sources tried after the state's own files: a plan signer is less certain than an officer roll. */
+const NATIONAL_TAIL: OpenDataSourceId[] = ['form5500'];
+
+/** The state's own files only (no national overlays). */
+export function stateOpenDataSources(state: string): OpenDataSourceId[] {
+  return [...(STATE_SOURCES[normalizeState(state)] || [])];
+}
 
 /** State -> free owner files queried for it (national overlays excluded). Reported by the health tool. */
 export function openDataStateSources(): Record<string, OpenDataSourceId[]> {
@@ -931,7 +1084,7 @@ export function openDataStateSources(): Record<string, OpenDataSourceId[]> {
 
 export function openDataSourcesFor(state: string): OpenDataSourceId[] {
   const st = normalizeState(state);
-  return [...NATIONAL_SOURCES, ...(STATE_SOURCES[st] || [])];
+  return [...NATIONAL_SOURCES, ...(STATE_SOURCES[st] || []), ...NATIONAL_TAIL];
 }
 
 export function openDataEnabled(ctx?: LookupContext): boolean {
@@ -979,6 +1132,10 @@ async function runSource(id: OpenDataSourceId, input: NameLookupInput, ctx?: Loo
       return resolveAkBusinessLicense(input, ctx);
     case 'phl_bl':
       return resolvePhiladelphia(input, ctx);
+    case 'cms_owners':
+      return { result: await resolveCmsOwners(input, ctx), legal_name: null };
+    case 'form5500':
+      return { result: await resolveForm5500(input, ctx), legal_name: null };
     default:
       return { result: null, legal_name: null };
   }

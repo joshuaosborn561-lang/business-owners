@@ -11,6 +11,7 @@ import {
 import type { IlDtaIndex } from './ilDta.js';
 import type { OpenDataSourceId } from './openDataSources.js';
 import type { SerperSearchResponse } from './types.js';
+import type { UniverseStore } from '../../universe/store.js';
 
 /** Direct SOS HTTP must finish in this window. Never wait on a hung registry. */
 export const SOS_HTTP_TIMEOUT_MS = 15_000;
@@ -58,6 +59,8 @@ export interface LookupContext {
   openDataEnabled?: boolean;
   /** Restrict open-data sources (tests / targeted runs). */
   openDataSources?: OpenDataSourceId[];
+  /** Universe table reader for the Form 5500 overlay. Defaults to UniverseStore.fromEnv(); null disables. */
+  universeStore?: UniverseStore | null;
   /** Unblocker (residential fetch API) for bot-walled registries. Default on when UNBLOCKER_API_KEY is set. */
   unblockerEnabled?: boolean;
   /** Injected unblocker fetch (tests). */

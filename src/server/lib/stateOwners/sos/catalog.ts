@@ -771,6 +771,20 @@ export const AGENT_ONLY_SKIP_CODES = [
 
 export type AgentOnlySkipCode = (typeof AGENT_ONLY_SKIP_CODES)[number];
 
+/**
+ * Registries whose terms forbid automated or scripted searches. Never fetched by this service, directly or through
+ * the unblocker / Apify. Open-data overlays, Serper (Google) and the web cascade still run for these states.
+ *   NC: "Automated or scripted searches may degrade system performance and are not permitted." (sosnc.gov, checked
+ *       2026-11-07). Compliant route: NC SOS data subscription ($750 setup + $2,000 per state fiscal year), pending OK.
+ */
+export const SCRIPTED_SEARCH_PROHIBITED: Record<string, string> = {
+  NC: 'NC SOS terms: automated or scripted searches are not permitted. Use the paid NC data subscription instead.',
+};
+
+export function scriptedSearchProhibited(state: string): boolean {
+  return Object.prototype.hasOwnProperty.call(SCRIPTED_SEARCH_PROHIBITED, String(state || '').toUpperCase());
+}
+
 /** 40 states + DC where some official source names officers, principals, governing persons or DBA owners. */
 export const OFFICER_PUBLISHING_CODES = [
   'AK', 'AL', 'AR', 'AZ', 'CA', 'CT', 'DC', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN', 'KY', 'LA', 'MA', 'MI', 'MN', 'MO',

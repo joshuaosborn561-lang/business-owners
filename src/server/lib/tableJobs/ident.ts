@@ -18,10 +18,11 @@ export const DEFAULT_READ_SCHEMAS = [
   'client_salesglider',
   'client_peterson',
   'client_techevo',
+  'client_pe',
   'lp',
   'public',
 ];
-export const DEFAULT_WRITE_SCHEMAS = ['scratch', 'client_emcor', 'client_salesglider', 'client_peterson', 'client_techevo'];
+export const DEFAULT_WRITE_SCHEMAS = ['scratch', 'client_emcor', 'client_salesglider', 'client_peterson', 'client_techevo', 'client_pe'];
 
 export const COLUMN_TARGETS = [
   'company_name',

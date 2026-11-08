@@ -7,7 +7,7 @@ import { resolveHardToFind } from './hardToFind.js';
 import { resolveUnmaskByAddress } from './unmask.js';
 import { resolveOpenDataOwners } from './openDataSources.js';
 import { normalizeState } from '../names.js';
-import { catalogByCode, isAgentOnlySkipState } from './catalog.js';
+import { catalogByCode, isAgentOnlySkipState, scriptedSearchProhibited } from './catalog.js';
 import { resolveAgentFallback } from './agentFallback.js';
 import { resolveDbaLegalName } from './dbaResolver.js';
 import {
@@ -226,7 +226,7 @@ async function resolveIllinois(input: NameLookupInput, ctx?: LookupContext): Pro
   };
 }
 
-async function resolveOfficialNameLookup(
+export async function resolveOfficialNameLookup(
   input: NameLookupInput,
   ctx?: LookupContext,
 ): Promise<NameLookupResult> {
@@ -260,6 +260,9 @@ async function resolveOfficialNameLookup(
   }
   if (state === 'CA') return resolveCalifornia(input, ctx);
   if (state === 'IL') return resolveIllinois(input, ctx);
+  if (scriptedSearchProhibited(state)) {
+    return emptyNameResult(input, 'terms_prohibited', 'us_sos', { source_url: entry.search_url, implemented: false });
+  }
   if (usesHtmlOfficerAdapter(state)) {
     return resolveHtmlOfficerState(input, state, ctx);
   }

@@ -34,10 +34,11 @@ const MN_SEARCH = 'https://mblsportal.sos.mn.gov/Business/Search';
 const UT_SEARCH = 'https://businessregistration.utah.gov/EntitySearch/OnlineEntitySearch';
 const WA_SEARCH = 'https://ccfs.sos.wa.gov/';
 
-export const HTML_REGISTRY_STATES = ['GA', 'NC', 'AZ', 'TX', 'MN', 'UT', 'WA'] as const;
+/** NC is not here: its terms forbid scripted searches (catalog SCRIPTED_SEARCH_PROHIBITED). The NC parser stays for tests. */
+export const HTML_REGISTRY_STATES = ['GA', 'AZ', 'TX', 'MN', 'UT', 'WA'] as const;
 export type HtmlOfficerState = (typeof HTML_REGISTRY_STATES)[number] | string;
 
-const HTML_ADAPTER_SKIP = new Set(['CA', 'IL', 'OH', 'CO', 'OK', ...AGENT_ONLY_SKIP_CODES]);
+const HTML_ADAPTER_SKIP = new Set(['CA', 'IL', 'OH', 'CO', 'OK', 'NC', ...AGENT_ONLY_SKIP_CODES]);
 
 export function usesHtmlOfficerAdapter(state: string): boolean {
   if ((HTML_REGISTRY_STATES as readonly string[]).includes(state)) return true;

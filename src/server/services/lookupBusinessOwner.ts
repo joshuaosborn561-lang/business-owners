@@ -38,7 +38,7 @@ import {
 } from '../lib/stateOwners/sos/spend.js';
 import { isWaterfallReady } from '../lib/stateOwners/sos/waterfall.js';
 import { UNBLOCKER_STATES, unblockerConfigured, unblockerUsdPerLookup } from '../lib/stateOwners/sos/unblocker.js';
-import { openDataSourcesFor } from '../lib/stateOwners/sos/openDataSources.js';
+import { stateOpenDataSources } from '../lib/stateOwners/sos/openDataSources.js';
 import {
   fetchOwnerHits,
   memoryOwnerHits,
@@ -144,7 +144,7 @@ export function quoteForRows(inputs: NameLookupInput[], opts?: { ca_batch?: bool
     const st = normalizeState(row.state) || 'UNK';
     byState[st] = (byState[st] || 0) + 1;
   }
-  const freeFirst = inputs.filter((row) => openDataSourcesFor(row.state).length > 2).length;
+  const freeFirst = inputs.filter((row) => stateOpenDataSources(row.state).length > 0).length;
   return {
     rows: n,
     rows_by_state: byState,

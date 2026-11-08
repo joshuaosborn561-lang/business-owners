@@ -30,8 +30,12 @@ Paid bulk products (MN, RI, AZ, OK, ND, NC, MT, HI, UT, WY, KY, ...) are in `OWN
 | DC | Basic Business License (DCGIS FEEDS/DCRA) | Business owner first/last | `dc_bbl` | Oct 2026 |
 | **AK** | DCCED business licenses (ArcGIS `Business_Licenses/MapServer/2`) | `Owners` of every Alaska business license | `ak_bl` | Nov 5 2026 |
 | All | FMCSA census `az4n-8mr2`; CMS NPPES | Company officers of USDOT registrants; authorized official of healthcare orgs | `fmcsa`, `nppes` | Oct 2026 |
+| **All** | CMS All Owners + Enrollments (HHA, hospice, SNF, RHC, hospital), quarterly | Individual owners with role and ownership %, plus PE and REIT flags and organizational owners | `cms_owners` overlay; `cms_*` universe sources | Nov 8 2026 |
+| **All** | DOL Form 5500 / 5500-SF bulk, yearly | Employer-side plan signer by EIN, with participant count, phone and NAICS. Loaded into `client_pe.bo_universe`, then read by the overlay | `form5500` overlay and universe source | Nov 8 2026 |
 
 `health` returns `open_data_state_sources`, the live state-to-adapter map.
+
+NC: the registry is never fetched (its terms forbid scripted searches). The paid NC data subscription is the compliant route.
 
 ## Free, but not wired (and why)
 

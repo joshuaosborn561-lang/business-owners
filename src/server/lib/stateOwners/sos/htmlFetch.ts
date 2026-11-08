@@ -17,13 +17,13 @@ import {
 } from './context.js';
 import { apifyFetchHtml } from './apifyPlaywright.js';
 import { fetchViaUnblocker, unblockerConfigured, usesUnblocker } from './unblocker.js';
-import { catalogByCode } from './catalog.js';
+import { catalogByCode, scriptedSearchProhibited } from './catalog.js';
 import { APIFY_USD_PER_BLOCKED_LOOKUP, companySpendKey } from './spend.js';
 import type { NameLookupInput } from './types.js';
 
 /** Datacenter IPs get Cloudflare/Incapsula. Try residential proxy before Apify. TX/IL stay direct. */
 /** Registry hosts that drop or time out connections from the box network. */
-export const BOX_UNREACHABLE_STATES = new Set(['GA', 'UT', 'NC', 'OH', 'PA', 'MA']);
+export const BOX_UNREACHABLE_STATES = new Set(['GA', 'UT', 'OH', 'PA', 'MA']);
 
 export const BOT_BLOCK_PROXY_STATES = new Set([
   'AL',
@@ -37,7 +37,6 @@ export const BOT_BLOCK_PROXY_STATES = new Set([
   'MN',
   'MO',
   'MS',
-  'NC',
   'NE',
   'NH',
   'NV',
@@ -172,6 +171,10 @@ export async function fetchOfficialPage(
   }
   if (!ctx?.live) {
     return { status: 0, body: '', url, via_apify: false, blocked: false, usd: 0 };
+  }
+  // Defense in depth: a registry whose terms forbid scripted searches is never fetched, by any route.
+  if (scriptedSearchProhibited(opts.state)) {
+    return { status: 0, body: '', url, via_apify: false, blocked: true, usd: 0 };
   }
   if (lookupDeadlineExceeded(ctx)) {
     return { status: 0, body: '', url, via_apify: false, blocked: false, usd: 0, timed_out: true };
